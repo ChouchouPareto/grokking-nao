@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Html } from "@react-three/drei";
-import type { ThoughtEdge, ThoughtNode } from "@/lib/types";
+import type { AISuggestion, ThoughtEdge, ThoughtNode } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { controlsRef, fixNode, positionsRef, startLayout, syncPositions } from "@/lib/graph";
 
@@ -58,6 +58,7 @@ function Graph() {
   const selectedEdgeId = useStore((s) => s.selectedEdgeId);
   const mode = useStore((s) => s.mode);
   const connectFromId = useStore((s) => s.connectFromId);
+  const suggestions = useStore((s) => s.suggestions);
 
   const nodeIds = nodes.map((n) => n.id).join(",");
   const edgeIds = edges.map((e) => e.id).join(",");
@@ -114,6 +115,16 @@ function Graph() {
           connectMode={mode === "connect"}
         />
       ))}
+      {suggestions
+        .filter((s) => s.type === "node")
+        .map((s) => (
+          <CandidateNode key={s.id} suggestion={s} />
+        ))}
+      {suggestions
+        .filter((s) => s.type === "edge")
+        .map((s) => (
+          <CandidateEdge key={s.id} suggestion={s} />
+        ))}
     </group>
   );
 }
@@ -298,6 +309,68 @@ function EdgeMesh({
       >
         <cylinderGeometry args={[radius, radius, 1, 10]} />
         <meshBasicMaterial color={color} transparent opacity={opacity} />
+      </mesh>
+    </group>
+  );
+}
+
+function CandidateNode({ suggestion }: { suggestion: AISuggestion }) {
+  const pos = suggestion.position ?? { x: 0, y: 0, z: 0 };
+  return (
+    <group position={[pos.x, pos.y, pos.z]}>
+      <mesh>
+        <sphereGeometry args={[0.55, 24, 24]} />
+        <meshStandardMaterial
+          color="#a5b4fc"
+          roughness={0.4}
+          metalness={0.1}
+          transparent
+          opacity={0.45}
+        />
+      </mesh>
+      <Html position={[0, 1.15, 0]} center zIndexRange={[10, 0]}>
+        <div
+          className="node-label"
+          style={{ opacity: 0.75, borderColor: "#a5b4fc" }}
+        >
+          {suggestion.content}
+        </div>
+      </Html>
+    </group>
+  );
+}
+
+function CandidateEdge({ suggestion }: { suggestion: AISuggestion }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const tmpA = useRef(new THREE.Vector3());
+  const tmpB = useRef(new THREE.Vector3());
+  const tmpMid = useRef(new THREE.Vector3());
+  const tmpDir = useRef(new THREE.Vector3());
+
+  useFrame(() => {
+    if (!suggestion.sourceNodeId || !suggestion.targetNodeId) return;
+    const a = positionsRef.current.get(suggestion.sourceNodeId);
+    const b = positionsRef.current.get(suggestion.targetNodeId);
+    const g = groupRef.current;
+    if (!a || !b || !g) return;
+    tmpA.current.copy(a);
+    tmpB.current.copy(b);
+    tmpMid.current.addVectors(tmpA.current, tmpB.current).multiplyScalar(0.5);
+    tmpDir.current.subVectors(tmpB.current, tmpA.current);
+    const len = Math.max(tmpDir.current.length(), 0.001);
+    g.position.copy(tmpMid.current);
+    g.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      tmpDir.current.normalize(),
+    );
+    g.scale.set(1, len, 1);
+  });
+
+  return (
+    <group ref={groupRef}>
+      <mesh>
+        <cylinderGeometry args={[0.06, 0.06, 1, 8]} />
+        <meshBasicMaterial color="#a5b4fc" transparent opacity={0.4} />
       </mesh>
     </group>
   );
