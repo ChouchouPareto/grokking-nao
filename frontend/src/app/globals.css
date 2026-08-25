@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0b0e14;
+  --surface: #131722;
+  --surface-2: #1a2030;
+  --line: #262d3d;
+  --ink: #e8ebf2;
+  --muted: #8a93a6;
+  --primary: #6d6ff2;
+  --primary-bright: #a5b4fc;
+  --discovery: #f5b544;
+  --danger: #e5534b;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-primary-bright: var(--primary-bright);
+  --color-discovery: var(--discovery);
+  --color-danger: var(--danger);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family:
+    "PingFang SC",
+    "Microsoft YaHei",
+    "Noto Sans CJK SC",
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+/* 节点标签：不拦截画布指针事件（水平/垂直居中由 drei Html 的 center 处理） */
+.node-label {
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--ink);
+  background: rgba(19, 23, 34, 0.82);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 3px 8px;
+  transition: opacity 0.2s ease;
+}
+
+canvas {
+  touch-action: none;
+}
