@@ -29,6 +29,27 @@ export interface ThoughtEdge {
   updatedAt: number;
 }
 
+export type SuggestionType = "node" | "edge" | "question";
+export type SuggestionStatus =
+  | "pending"
+  | "accepted"
+  | "edited_accepted"
+  | "rejected";
+
+export interface AISuggestion {
+  id: string;
+  requestId: string;
+  type: SuggestionType;
+  content: string;
+  reason: string;
+  relatedNodeIds: string[];
+  sourceNodeId?: string;
+  targetNodeId?: string;
+  edgeNote?: string;
+  status: SuggestionStatus;
+  position?: Vec3; // 前端补充：node 类型候选的临时位置
+}
+
 export interface Idea {
   id: string;
   schemaVersion: number;
@@ -40,6 +61,7 @@ export interface Idea {
   nodes: ThoughtNode[];
   edges: ThoughtEdge[];
   discoveryCount: number;
+  rejectedSummary: string[];
 }
 
 export const SCHEMA_VERSION = 1;

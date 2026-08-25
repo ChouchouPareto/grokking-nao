@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Canvas3D from "./Canvas3D";
 import { useStore } from "@/lib/store";
 import { splitKeywords } from "@/lib/utils";
+import type { AISuggestion } from "@/lib/types";
 import { Button, Modal, TextInput } from "@/components/ui";
 
 export default function IdeaSpace({ id }: { id: string }) {
@@ -51,6 +52,7 @@ export default function IdeaSpace({ id }: { id: string }) {
     <div className="relative h-screen w-screen overflow-hidden bg-bg text-ink">
       <Canvas3D />
       <TopBar />
+      <SuggestionPanel />
       <Toolbar onAdd={() => setAddOpen(true)} />
       <NodePanel key={selectedNodeId ? `node-${selectedNodeId}` : "node-none"} />
       <EdgePanel key={selectedEdgeId ? `edge-${selectedEdgeId}` : "edge-none"} />
@@ -138,6 +140,8 @@ function Toolbar({ onAdd }: { onAdd: () => void }) {
   const setMode = useStore((s) => s.setMode);
   const requestGlobalView = useStore((s) => s.requestGlobalView);
   const requestRelayout = useStore((s) => s.requestRelayout);
+  const requestSuggestions = useStore((s) => s.requestSuggestions);
+  const aiStatus = useStore((s) => s.aiStatus);
   const focusedNodeId = useStore((s) => s.focusedNodeId);
   const connectFromId = useStore((s) => s.connectFromId);
 
@@ -151,8 +155,11 @@ function Toolbar({ onAdd }: { onAdd: () => void }) {
         >
           连接节点
         </Button>
-        <Button disabled title="AI 建议将在下一阶段开放">
-          帮我展开
+        <Button
+          onClick={requestSuggestions}
+          disabled={aiStatus === "loading"}
+        >
+          {aiStatus === "loading" ? "正在思考…" : "帮我展开"}
         </Button>
         <Button variant="ghost" onClick={requestGlobalView}>
           返回全局
@@ -432,5 +439,138 @@ function AddNodesDialog({ onClose }: { onClose: () => void }) {
         </Button>
       </div>
     </Modal>
+  );
+}
+
+const TYPE_LABEL: Record<AISuggestion["type"], string> = {
+  node: "节点",
+  edge: "连接",
+  question: "追问",
+};
+
+function SuggestionPanel() {
+  const suggestions = useStore((s) => s.suggestions);
+  const aiStatus = useStore((s) => s.aiStatus);
+  const aiMessage = useStore((s) => s.aiMessage);
+  const requestSuggestions = useStore((s) => s.requestSuggestions);
+  const clearSuggestions = useStore((s) => s.clearSuggestions);
+
+  if (aiStatus === "idle") return null;
+
+  return (
+    <div className="absolute left-4 top-16 z-20 max-h-[70vh] w-80 overflow-auto rounded-xl border border-line bg-surface p-4 shadow-2xl">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-sm font-medium text-ink">AI 建议</span>
+        <button
+          type="button"
+          aria-label="关闭"
+          className="text-muted hover:text-ink"
+          onClick={clearSuggestions}
+        >
+          ✕
+        </button>
+      </div>
+
+      {aiStatus === "loading" && (
+        <div className="flex items-center gap-2 text-sm text-muted">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-line border-t-primary" />
+          正在思考…
+        </div>
+      )}
+
+      {aiStatus === "error" && (
+        <div>
+          <p className="text-sm text-danger">{aiMessage}</p>
+          <Button variant="primary" className="mt-2" onClick={requestSuggestions}>
+            重试
+          </Button>
+        </div>
+      )}
+
+      {aiStatus === "success" && suggestions.length === 0 && (
+        <p className="text-sm text-muted">{aiMessage || "本轮没有建议"}</p>
+      )}
+
+      {suggestions.map((s) => (
+        <SuggestionCard key={s.id} suggestion={s} />
+      ))}
+    </div>
+  );
+}
+
+function SuggestionCard({ suggestion }: { suggestion: AISuggestion }) {
+  const acceptSuggestion = useStore((s) => s.acceptSuggestion);
+  const rejectSuggestion = useStore((s) => s.rejectSuggestion);
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(() => suggestion.content);
+
+  return (
+    <div className="mb-3 rounded-lg border border-line bg-surface-2 p-3">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="rounded bg-primary/15 px-1.5 py-0.5 text-xs text-primary-bright">
+          {TYPE_LABEL[suggestion.type]}
+        </span>
+        <span className="text-xs text-muted">候选态</span>
+      </div>
+
+      {editing ? (
+        <textarea
+          value={text}
+          autoFocus
+          onChange={(e) => setText(e.target.value)}
+          rows={2}
+          className="w-full resize-none rounded-lg border border-line bg-bg px-2 py-1.5 text-sm text-ink outline-none focus:border-primary"
+        />
+      ) : (
+        <p className="text-sm text-ink">{suggestion.content}</p>
+      )}
+      <p className="mt-1 text-xs text-muted">{suggestion.reason}</p>
+      {suggestion.type === "edge" && suggestion.edgeNote && (
+        <p className="mt-1 text-xs text-muted">说明：{suggestion.edgeNote}</p>
+      )}
+
+      <div className="mt-2 flex flex-wrap gap-2">
+        {suggestion.type === "node" &&
+          (editing ? (
+            <Button
+              variant="primary"
+              onClick={() => {
+                acceptSuggestion(suggestion.id, text);
+                setEditing(false);
+              }}
+            >
+              确认接受
+            </Button>
+          ) : (
+            <>
+              <Button variant="primary" onClick={() => acceptSuggestion(suggestion.id)}>
+                接受
+              </Button>
+              <Button variant="default" onClick={() => setEditing(true)}>
+                编辑
+              </Button>
+            </>
+          ))}
+        {suggestion.type === "edge" && (
+          <Button variant="primary" onClick={() => acceptSuggestion(suggestion.id)}>
+            接受
+          </Button>
+        )}
+        {editing && (
+          <Button variant="ghost" onClick={() => setEditing(false)}>
+            取消
+          </Button>
+        )}
+        {suggestion.type === "question" ? (
+          <Button variant="ghost" onClick={() => rejectSuggestion(suggestion.id)}>
+            忽略
+          </Button>
+        ) : (
+          <Button variant="ghost" onClick={() => rejectSuggestion(suggestion.id)}>
+            拒绝
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
