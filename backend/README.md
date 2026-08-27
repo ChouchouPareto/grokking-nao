@@ -1,6 +1,6 @@
 # Grokking恼 · AI 代理后端
 
-切片 2 的 FastAPI 后端：无状态 AI 代理，安全持有模型 Key，把"帮我展开"请求转成 ≤3 条建议（缺失节点 / 潜在连接 / 启发式追问）。
+FastAPI 无状态 AI 代理：安全持有模型 Key，支持意图画像、动态维度展开、新节点关系扫描、围绕节点的头脑风暴和阶段总结。
 
 **数据说明**：后端不存业务数据；Idea/节点/连接仍在前端浏览器 IndexedDB。后端只在内存处理单次请求。
 
@@ -35,7 +35,12 @@ cp .env.example .env   # 填入 LLM_API_KEY
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/v1/health` | 健康检查，返回 `{status, mock}` |
-| POST | `/api/v1/ai/suggestions` | 生成 ≤3 条建议，请求/响应契约见 `docs/第2阶段技术开发文档.md` |
+| POST | `/api/v1/ai/suggestions` | `deep_expand` 全局发散、`relation_probe` 关系扫描或 `node_brainstorm` 节点头脑风暴 |
+| POST | `/api/v1/ai/summary` | 基于正式节点和连接生成结构化阶段总结 |
+
+### 内容安全
+
+联想接口在调用模型前检查项目标题、原始念头、节点、连接说明和历史拒绝内容；命中政治敏感、暴力犯罪、色情或违背公序良俗的内容时返回 `422 content_blocked`，且不会调用模型。模型返回的候选还会再次检查；模型也可通过结构化 `safety_refusal` 主动拒绝。
 
 ## 测试
 
@@ -43,5 +48,5 @@ cp .env.example .env   # 填入 LLM_API_KEY
 .venv/bin/python -m pytest tests/ -q
 ```
 
-- 12 个 mock 测试覆盖：解析器（宽容解析、剥围栏、截取数组）、校验（截取 3 条、过滤非法类型、丢弃引用不存在节点的 edge）、mock 生成与拒绝去重。
+- 23 个测试覆盖：新旧响应兼容解析、意图识别、节点头脑风暴、阶段总结、动态维度、非法建议过滤、关系扫描约束、拒绝去重及内容安全输入/输出拦截。
 - **真实模型冒烟待提供 Key**：填 `LLM_API_KEY` 后，用 curl POST 真实请求验证。

@@ -1,4 +1,4 @@
-// 切片 2 端到端测试：AI 建议引擎（后端 mock 模式）。
+// AI 建议引擎端到端测试（mock 或真实模型均可）。
 const { chromium } = require("playwright-core");
 
 const BASE = "http://localhost:3010";
@@ -26,11 +26,13 @@ function check(name, ok, extra = "") {
 
   // 1. 创建 Idea 并添加 3 个节点
   await page.goto(BASE, { waitUntil: "networkidle" });
-  await page.getByPlaceholder("写下一点正在想的东西…").fill("生鲜订阅");
-  await page.getByRole("button", { name: "进入空间" }).click();
+  await page.getByLabel("新建项目").fill("生鲜订阅");
+  await page.getByRole("button", { name: "创建并进入 3D" }).click();
   await page.waitForURL(/\/idea\//);
   await page.waitForSelector("canvas");
-  await page.getByRole("button", { name: /添加关键词/ }).click();
+  await page.getByRole("button", { name: "显示左侧工具栏" }).click();
+  await page.getByRole("button", { name: "显示右侧工具栏" }).click();
+  await page.getByRole("button", { name: "添加节点" }).click();
   await page.locator("textarea").last().fill("生鲜\n配送时效\n价格敏感");
   await page.getByRole("button", { name: /添加.*个节点/ }).click();
   await page.waitForTimeout(2000);
@@ -38,39 +40,44 @@ function check(name, ok, extra = "") {
   const beforeLabels = await page.locator(".node-label").count();
   check("初始 3 个节点", beforeLabels === 3, `实际 ${beforeLabels}`);
 
-  // 2. 点击"帮我展开"
-  await page.getByRole("button", { name: "帮我展开" }).click();
-  await page.getByText("AI 建议").waitFor({ timeout: 10000 });
-  check("AI 建议面板出现", true);
+  // 2. 选择正式节点，从节点发起头脑风暴
+  await page.getByTestId("formal-node").first().focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "围绕它联想" }).click();
+  await page.locator('[data-testid="candidate-node"]').first().waitFor({ timeout: 45000 });
+  const candidateCount = await page.locator('[data-testid="candidate-node"]').count();
+  check("节点周围出现虚化联想", candidateCount >= 1, `候选 ${candidateCount}`);
 
-  // 等待建议渲染完成
-  await page.waitForFunction(
-    () => document.querySelectorAll('button:not([disabled])').length > 0,
-    { timeout: 10000 },
-  ).catch(() => {});
-  await page.waitForTimeout(1200);
+  // 3. 点击空间中的候选节点，再由用户采用
+  await page.locator('[data-testid="candidate-node"]').first().click({ force: true });
+  await page.getByRole("button", { name: "接受" }).waitFor({ timeout: 5000 });
+  check("点击候选后出现选择操作", true);
+  await page.getByRole("button", { name: "接受" }).click();
+  await page.waitForTimeout(600);
+  check("采用后写入正式网络", (await page.locator(".node-label").count()) >= 4);
+  check("采用后已保存", await page.getByText("已保存").isVisible());
 
-  const acceptCount = await page.getByRole("button", { name: "接受" }).count();
-  check("出现 2 条可接受建议（节点+连接）", acceptCount === 2, `接受按钮 ${acceptCount}`);
-  check("出现追问卡片", await page.getByRole("button", { name: "忽略" }).isVisible());
-  check("出现候选节点（半透明）", (await page.locator(".node-label").count()) === 4);
+  // 4. 在右侧生成并保存阶段总结
+  await page.getByRole("button", { name: /^论/ }).click();
+  await page.getByRole("button", { name: "总结全部" }).click();
+  await page.getByTestId("summary-draft").waitFor({ timeout: 45000 });
+  check("阶段总结生成", await page.getByTestId("summary-draft").isVisible());
+  await page.getByRole("button", { name: "保存阶段总结" }).click();
+  check("阶段总结保存", await page.getByText("阶段总结已保存").isVisible());
 
-  // 3. 接受节点建议
-  await page.getByRole("button", { name: "接受" }).first().click();
-  await page.waitForTimeout(800);
-  const acceptAfter = await page.getByRole("button", { name: "接受" }).count();
-  check("接受后剩余 1 条建议", acceptAfter === 1, `接受按钮 ${acceptAfter}`);
-  check("接受后已保存", await page.getByText("已保存").isVisible());
-
-  // 4. 拒绝连接建议
-  await page.getByRole("button", { name: "拒绝" }).first().click();
-  await page.waitForTimeout(400);
-  check("拒绝后建议清空", (await page.getByRole("button", { name: "接受" }).count()) === 0);
-
-  // 5. 忽略追问
-  await page.getByRole("button", { name: "忽略" }).click();
-  await page.waitForTimeout(400);
-  check("追问忽略后面板隐藏", !(await page.getByText("AI 建议").isVisible().catch(() => false)));
+  // 5. 敏感内容必须被后端拒绝，并在前端主动显示提醒
+  const unsafePage = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await unsafePage.goto(BASE, { waitUntil: "networkidle" });
+  await unsafePage.getByLabel("新建项目").fill("国民党打败共产党");
+  await unsafePage.getByRole("button", { name: "创建并进入 3D" }).click();
+  await unsafePage.waitForURL(/\/idea\//);
+  await unsafePage.waitForSelector("canvas");
+  await unsafePage.getByRole("button", { name: "显示左侧工具栏" }).click();
+  await unsafePage.getByRole("button", { name: "全局发散" }).click();
+  await unsafePage.getByText("内容安全提醒").waitFor({ timeout: 5000 });
+  check("敏感内容显示安全提醒", await unsafePage.getByText("AI 已停止本次联想").isVisible());
+  check("敏感内容不生成候选", (await unsafePage.locator('[data-testid="candidate-node"]').count()) === 0);
+  check("安全提醒不提供直接重试", (await unsafePage.getByRole("button", { name: "重试" }).count()) === 0);
 
   // 6. 无控制台错误
   check("无控制台错误", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
