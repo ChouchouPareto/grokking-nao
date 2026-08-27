@@ -1,11 +1,14 @@
+import hmac
+import os
 import uuid
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from . import schemas
 from .config import is_mock
-from .services import llm, suggestions
+from .services import content_safety, llm, suggestions
 
 app = FastAPI(title="Grokking恼 AI 代理", version="0.1.0")
 
@@ -21,6 +24,19 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def protect_ai_routes(request: Request, call_next):
+    if request.url.path.startswith("/api/v1/ai/"):
+        expected = os.getenv("INTERNAL_API_TOKEN", "").strip()
+        provided = request.headers.get("x-internal-api-token", "")
+        if expected and not hmac.compare_digest(provided, expected):
+            return JSONResponse(
+                status_code=401,
+                content={"error": {"code": "unauthorized", "message": "未授权访问"}},
+            )
+    return await call_next(request)
+
+
 @app.get("/api/v1/health")
 async def health():
     return {"status": "ok", "mock": is_mock()}
@@ -30,7 +46,18 @@ async def health():
 async def suggest(req: schemas.SuggestRequest):
     request_id = uuid.uuid4().hex
     try:
-        items = await suggestions.generate_suggestions(req)
+        items, intent_profile = await suggestions.generate_suggestions(req)
+    except content_safety.ContentSafetyError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": {
+                    "code": "content_blocked",
+                    "message": content_safety.SAFETY_MESSAGE,
+                    "category": exc.category,
+                }
+            },
+        )
     except llm.LLMError:
         raise HTTPException(
             status_code=502,
@@ -41,4 +68,26 @@ async def suggest(req: schemas.SuggestRequest):
             status_code=502,
             detail={"error": {"code": "ai_unparsable", "message": "AI 返回无法解析，请重试"}},
         )
-    return schemas.SuggestResponse(request_id=request_id, suggestions=items)
+    return schemas.SuggestResponse(
+        request_id=request_id,
+        suggestions=items,
+        intent_profile=intent_profile,
+    )
+
+
+@app.post("/api/v1/ai/summary", response_model=schemas.SummaryResponse)
+async def summarize(req: schemas.SummaryRequest):
+    request_id = uuid.uuid4().hex
+    try:
+        result = await suggestions.generate_summary(req)
+    except llm.LLMError:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": {"code": "ai_failed", "message": "AI 暂时不可用，请稍后重试"}},
+        )
+    except suggestions.ParseError:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": {"code": "ai_unparsable", "message": "AI 总结无法解析，请重试"}},
+        )
+    return schemas.SummaryResponse(request_id=request_id, summary=result)

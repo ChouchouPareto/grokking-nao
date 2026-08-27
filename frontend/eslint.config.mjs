@@ -11,6 +11,7 @@ const eslintConfig = defineConfig([
     ".next/**",
     "out/**",
     "build/**",
+    "deploy/**",
     "next-env.d.ts",
     // 独立 Node 脚本（端到端测试）
     "scripts/**",

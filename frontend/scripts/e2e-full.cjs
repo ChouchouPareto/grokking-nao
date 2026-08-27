@@ -42,18 +42,38 @@ async function clickSphere(page, label) {
 
   // 1. 首页
   await page.goto(BASE, { waitUntil: "networkidle" });
-  check("首页加载", await page.getByText("我有一个念头").isVisible());
+  check("首页加载", await page.getByRole("heading", { level: 1, name: "Grokking恼" }).isVisible());
 
   // 2. 创建 Idea
-  await page.getByPlaceholder("写下一点正在想的东西…").fill("生鲜订阅服务");
-  await page.getByRole("button", { name: "进入空间" }).click();
+  await page.getByLabel("新建项目").fill("生鲜订阅服务");
+  await page.getByRole("button", { name: "创建并进入 3D" }).click();
   await page.waitForURL(/\/idea\//, { timeout: 10000 });
   check("跳转到空间页", page.url().includes("/idea/"));
   await page.waitForSelector("canvas", { timeout: 15000 });
   check("3D 画布挂载", true);
 
+  // 2.1 左右侧栏默认收起，触边临时展开，离开后自动收回
+  const leftPanel = page.locator(".workspace-panel-left");
+  const rightPanel = page.locator(".workspace-panel-right");
+  check("左右侧栏默认收起", !(await leftPanel.isVisible()) && !(await rightPanel.isVisible()));
+  await page.mouse.move(2, 400);
+  await page.waitForTimeout(420);
+  check("鼠标触碰左缘显示左侧栏", await leftPanel.isVisible());
+  await page.mouse.move(640, 400);
+  await page.waitForTimeout(1200);
+  check("离开左侧栏后自动收起", !(await leftPanel.isVisible()));
+  await page.mouse.move(1278, 400);
+  await page.waitForTimeout(420);
+  check("鼠标触碰右缘显示右侧栏", await rightPanel.isVisible());
+  await page.mouse.move(640, 400);
+  await page.waitForTimeout(1200);
+  check("离开右侧栏后自动收起", !(await rightPanel.isVisible()));
+
+  await page.getByRole("button", { name: "显示左侧工具栏" }).click();
+  await page.getByRole("button", { name: "显示右侧工具栏" }).click();
+
   // 3. 添加 5 个关键词
-  await page.getByRole("button", { name: /添加关键词/ }).click();
+  await page.getByRole("button", { name: "添加节点" }).click();
   await page.locator("textarea").last().fill("生鲜\n冷链\n配送时效\n价格敏感\n复购");
   await page.getByRole("button", { name: /添加.*个节点/ }).click();
   await page.waitForTimeout(2200); // 等布局稳定 + 自动取景
@@ -63,16 +83,55 @@ async function clickSphere(page, label) {
     (l) => l.x >= 0 && l.x <= 1280 && l.y >= 0 && l.y <= 800,
   );
   check("节点均在视口内", allOnScreen, JSON.stringify(labels.map((l) => Math.round(l.x) + "," + Math.round(l.y))));
+  const usableLabels = labels.filter((l) => l.x > 180 && l.x < 920 && l.y > 80 && l.y < 740);
+  check("至少两个节点位于可操作画布区", usableLabels.length >= 2, `可操作 ${usableLabels.length}`);
 
-  // 4. 连接两个节点
-  await page.getByRole("button", { name: "连接节点" }).click();
-  await clickSphere(page, labels[0]);
+  // 4. 按住方向键连续游走视角
+  const roamTarget = page.getByTestId("formal-node").first();
+  const beforeRoam = await roamTarget.boundingBox();
+  await page.keyboard.down("ArrowRight");
+  await page.waitForTimeout(320);
+  await page.keyboard.up("ArrowRight");
+  const afterRoam = await roamTarget.boundingBox();
+  const roamDistance = beforeRoam && afterRoam ? Math.abs(afterRoam.x - beforeRoam.x) : 0;
+  check("方向键可持续游走视角", roamDistance > 4, `画面移动 ${Math.round(roamDistance)}px`);
+  const beforeTurn = await roamTarget.boundingBox();
+  await page.keyboard.down("q");
+  await page.waitForTimeout(320);
+  await page.keyboard.up("q");
+  const afterTurn = await roamTarget.boundingBox();
+  const turnDistance = beforeTurn && afterTurn
+    ? Math.hypot(afterTurn.x - beforeTurn.x, afterTurn.y - beforeTurn.y)
+    : 0;
+  check("Q / E 可持续左右转向", turnDistance > 4, `画面转动 ${Math.round(turnDistance)}px`);
+  await page.getByRole("button", { name: "全局视图" }).click();
+  await page.waitForTimeout(350);
+
+  // 5. 直接按住文字胶囊拖动节点
+  const dragTarget = page.getByTestId("formal-node").first();
+  const beforeDrag = await dragTarget.boundingBox();
+  if (!beforeDrag) throw new Error("拖拽目标不可见");
+  await page.mouse.move(beforeDrag.x + beforeDrag.width / 2, beforeDrag.y + beforeDrag.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(beforeDrag.x + beforeDrag.width / 2 + 70, beforeDrag.y + beforeDrag.height / 2 + 45, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const afterDrag = await dragTarget.boundingBox();
+  const dragDistance = afterDrag
+    ? Math.hypot(afterDrag.x - beforeDrag.x, afterDrag.y - beforeDrag.y)
+    : 0;
+  check("文字胶囊可拖动", dragDistance > 30, `移动 ${Math.round(dragDistance)}px`);
+
+  // 6. 连接两个节点
+  await page.keyboard.press("c");
+  check("C 进入连接模式", await page.getByText("点击一个节点作为起点").isVisible());
+  await page.getByTestId("formal-node").nth(0).click();
   check("已选起点提示", await page.getByText("已选起点，再点一个节点完成连接").isVisible());
-  await clickSphere(page, labels[1]);
+  await page.getByTestId("formal-node").nth(1).click();
   await page.waitForTimeout(400);
-  check("连接后面板出现", await page.getByText("连接", { exact: true }).isVisible());
+  check("连接后面板出现", await page.getByRole("button", { name: "标记为新发现" }).isVisible());
 
-  // 5. 标记新发现
+  // 7. 标记新发现
   await page.getByRole("button", { name: "标记为新发现" }).click();
   await page.waitForTimeout(400);
   const discCount = await page
@@ -81,10 +140,10 @@ async function clickSphere(page, label) {
     .count();
   check("新发现标记成功", discCount >= 1, `发现计数元素 ${discCount}`);
 
-  // 6. 保存状态
+  // 8. 保存状态
   check("显示已保存", await page.getByText("已保存").isVisible());
 
-  // 7. 刷新后恢复（节点 + 新发现）
+  // 9. 刷新后恢复（节点 + 新发现）
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForSelector(".node-label", { timeout: 15000 });
   check("刷新后节点恢复", (await page.locator(".node-label").count()) === 5);
@@ -93,13 +152,19 @@ async function clickSphere(page, label) {
     await page.locator("span").filter({ hasText: "新发现" }).isVisible(),
   );
 
-  // 8. 聚焦节点
-  const labels2 = await labelPositions(page);
-  await clickSphere(page, labels2[0]);
+  // 10. 聚焦节点
+  await page.getByRole("button", { name: "显示左侧工具栏" }).click();
+  await page.getByTestId("formal-node").first().focus();
+  await page.keyboard.press("Enter");
   await page.waitForTimeout(400);
   check("聚焦提示出现", await page.getByText("聚焦中，点击「返回全局」退出").isVisible());
 
-  // 9. 无控制台错误
+  // 11. Delete 快捷键删除当前选中节点
+  await page.keyboard.press("Delete");
+  await page.waitForTimeout(400);
+  check("Delete 删除选中节点", (await page.getByTestId("formal-node").count()) === 4);
+
+  // 12. 无控制台错误
   check("无控制台错误", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
   await browser.close();

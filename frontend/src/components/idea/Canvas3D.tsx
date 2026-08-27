@@ -2,37 +2,58 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, Html } from "@react-three/drei";
+import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
+import { OrbitControls, Html, Line } from "@react-three/drei";
 import type { AISuggestion, ThoughtEdge, ThoughtNode } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { controlsRef, fixNode, positionsRef, startLayout, syncPositions } from "@/lib/graph";
+import type { Vec3 } from "@/lib/types";
+import { Button, TextInput } from "@/components/ui";
 
-const NODE_COLOR = "#6d6ff2";
-const NODE_FOCUS_COLOR = "#a5b4fc";
-const NODE_SOURCE_COLOR = "#f5b544";
-const EDGE_COLOR = "#5b6472";
-const EDGE_DISCOVERY_COLOR = "#f5b544";
+const NODE_COLOR = "#958be8";
+const NODE_FOCUS_COLOR = "#b8d9ef";
+const NODE_SOURCE_COLOR = "#efbf77";
+const EDGE_COLOR = "#b9b9d8";
+const EDGE_DISCOVERY_COLOR = "#e8b86d";
+const VIEW_MOVEMENT_CODES = new Set([
+  "KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE",
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+]);
 
-export default function Canvas3D() {
+type QuickAddTarget = {
+  world: Vec3;
+  screen: { x: number; y: number; width: number; height: number };
+};
+
+export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; rightOpen: boolean }) {
   const clearSelection = useStore((s) => s.selectNode);
   const clearEdge = useStore((s) => s.selectEdge);
   const setConnectFrom = useStore((s) => s.setConnectFrom);
+  const addNodeAt = useStore((s) => s.addNodeAt);
+  const [quickAddTarget, setQuickAddTarget] = useState<QuickAddTarget | null>(null);
 
   return (
-    <div className="absolute inset-0">
+    <div className={`canvas-viewport absolute inset-0 min-w-0 ${leftOpen ? "lg:left-40" : "lg:left-0"} ${rightOpen ? "lg:right-[356px]" : "lg:right-0"}`}>
       <Canvas
+        gl={{ alpha: true, antialias: true }}
         camera={{ position: [0, 0, 30], fov: 55, near: 0.1, far: 1000 }}
+        onCreated={({ gl }) => {
+          gl.domElement.setAttribute("role", "img");
+          gl.domElement.setAttribute(
+            "aria-label",
+            "交互式 3D 关键词网络。WASD 或方向键移动，Q、E 左右转向，拖动旋转，滚轮缩放，双击空白处添加关键词。",
+          );
+        }}
         onPointerMissed={() => {
           clearSelection(null);
           clearEdge(null);
           setConnectFrom(null);
         }}
       >
-        <color attach="background" args={["#0b0e14"]} />
-        <ambientLight intensity={1.1} />
-        <directionalLight position={[10, 12, 10]} intensity={1.6} />
-        <pointLight position={[-12, -8, -12]} intensity={0.6} color="#a5b4fc" />
+        <ambientLight intensity={1.8} />
+        <directionalLight position={[10, 12, 10]} intensity={1.1} color="#ffffff" />
+        <pointLight position={[-12, -8, -12]} intensity={0.45} color="#c9c2f6" />
+        <BackgroundCreateLayer onCreate={setQuickAddTarget} />
         <Graph />
         <CameraController />
         <OrbitControls
@@ -45,7 +66,123 @@ export default function Canvas3D() {
           maxDistance={140}
         />
       </Canvas>
+      {quickAddTarget && (
+        <QuickAddDialog
+          target={quickAddTarget.screen}
+          onClose={() => setQuickAddTarget(null)}
+          onSubmit={(text) => {
+            addNodeAt(text, quickAddTarget.world);
+            setQuickAddTarget(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function BackgroundCreateLayer({ onCreate }: { onCreate: (target: QuickAddTarget) => void }) {
+  const { camera } = useThree();
+  const plane = useMemo(() => new THREE.Plane(), []);
+  const normal = useMemo(() => new THREE.Vector3(), []);
+  const target = useMemo(() => new THREE.Vector3(), []);
+
+  const onDoubleClick = (event: ThreeEvent<MouseEvent>) => {
+    event.stopPropagation();
+    camera.getWorldDirection(normal);
+    target.copy(controlsRef.current?.target ?? new THREE.Vector3());
+    plane.setFromNormalAndCoplanarPoint(normal, target);
+    const point = event.ray.intersectPlane(plane, new THREE.Vector3());
+    if (point) {
+      const canvasRect = (event.nativeEvent.target as HTMLCanvasElement).getBoundingClientRect();
+      onCreate({
+        world: { x: point.x, y: point.y, z: point.z },
+        screen: {
+          x: event.nativeEvent.clientX - canvasRect.left,
+          y: event.nativeEvent.clientY - canvasRect.top,
+          width: canvasRect.width,
+          height: canvasRect.height,
+        },
+      });
+    }
+  };
+
+  return (
+    <mesh onDoubleClick={onDoubleClick}>
+      <sphereGeometry args={[400, 24, 24]} />
+      <meshBasicMaterial
+        side={THREE.BackSide}
+        transparent
+        opacity={0}
+        depthWrite={false}
+      />
+    </mesh>
+  );
+}
+
+function QuickAddDialog({
+  target,
+  onClose,
+  onSubmit,
+}: {
+  target: QuickAddTarget["screen"];
+  onClose: () => void;
+  onSubmit: (text: string) => void;
+}) {
+  const [text, setText] = useState("");
+  const popoverRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!popoverRef.current?.contains(event.target as Node)) onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+    };
+  }, [onClose]);
+
+  const submit = () => {
+    if (text.trim()) onSubmit(text.trim());
+  };
+  const left = Math.min(Math.max(12, target.x + 14), Math.max(12, target.width - 332));
+  const top = Math.min(Math.max(64, target.y + 14), Math.max(64, target.height - 230));
+
+  return (
+    <section
+      ref={popoverRef}
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="quick-add-title"
+      className="quick-add-popover absolute z-40 w-[320px] rounded-3xl p-4"
+      style={{ left, top }}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <h2 id="quick-add-title" className="text-sm font-medium text-ink">在这里添加关键词</h2>
+        <button type="button" aria-label="关闭" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-full text-muted hover:bg-surface-2 hover:text-ink">✕</button>
+      </div>
+      <TextInput
+        value={text}
+        onChange={setText}
+        autoFocus
+        placeholder="输入一个关键词"
+        className="w-full"
+        onKeyDown={(event) => {
+          if (event.key === "Enter") submit();
+        }}
+      />
+      <p className="mt-2 text-[11px] leading-5 text-muted">
+        节点固定在双击位置，并寻找潜在联系。
+      </p>
+      <div className="mt-4 flex justify-end gap-2">
+        <Button variant="ghost" onClick={onClose}>取消</Button>
+        <Button variant="primary" disabled={!text.trim()} onClick={submit}>添加节点</Button>
+      </div>
+    </section>
   );
 }
 
@@ -170,7 +307,8 @@ function NodeMesh({
       return;
     }
     s.selectNode(node.id);
-    s.setFocused(s.focusedNodeId === node.id ? null : node.id);
+    s.setFocused(node.id);
+    s.requestFocusView(node.id);
   };
 
   const onPointerDown = (e: {
@@ -212,6 +350,7 @@ function NodeMesh({
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
       draggingRef.current = false;
       if (controlsRef.current) controlsRef.current.enabled = true;
       const pos = positionsRef.current.get(node.id);
@@ -223,6 +362,7 @@ function NodeMesh({
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   };
 
   const baseColor = isConnectSource
@@ -239,21 +379,42 @@ function NodeMesh({
     >
       <mesh
         onClick={handleClick}
+        onDoubleClick={(event) => event.stopPropagation()}
         onPointerDown={onPointerDown}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
       >
-        <sphereGeometry args={[0.55, 32, 32]} />
+        <sphereGeometry args={[0.78, 24, 24]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[0.18, 20, 20]} />
         <meshStandardMaterial
           color={baseColor}
-          roughness={0.35}
-          metalness={0.15}
+          roughness={0.18}
+          metalness={0.04}
           transparent
-          opacity={opacity}
+          opacity={opacity * 0.16}
+          depthWrite={false}
         />
       </mesh>
-      <Html position={[0, 1.15, 0]} center zIndexRange={[10, 0]}>
-        <div className="node-label" style={{ opacity: dimmed ? 0.2 : 1 }}>
+      <Html position={[0, 0, 0]} center zIndexRange={[10, 0]}>
+        <div
+          className={`node-label formal-node-label specular-node ${selected ? "is-selected" : ""} ${isConnectSource ? "is-source" : ""}`}
+          data-testid="formal-node"
+          role="button"
+          tabIndex={0}
+          aria-label={`选择节点：${node.text}`}
+          onPointerDown={onPointerDown}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onPointerOver={() => setHovered(true)}
+          onPointerOut={() => setHovered(false)}
+          onClick={handleClick}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") handleClick();
+          }}
+          style={{ opacity: dimmed ? 0.2 : 1 }}
+        >
           {node.text}
         </div>
       </Html>
@@ -295,8 +456,8 @@ function EdgeMesh({
   });
 
   const color = edge.isDiscovery ? EDGE_DISCOVERY_COLOR : EDGE_COLOR;
-  const radius = edge.isDiscovery ? 0.09 : 0.05;
-  const opacity = dimmed ? 0.1 : edge.isDiscovery ? 1 : selected ? 0.9 : 0.55;
+  const opacity = dimmed ? 0.08 : edge.isDiscovery ? 0.72 : selected ? 0.7 : 0.42;
+  const lineWidth = edge.isDiscovery ? 1.5 : selected ? 1.35 : 0.9;
 
   return (
     <group ref={groupRef}>
@@ -307,31 +468,59 @@ function EdgeMesh({
           if (s.mode === "browse") s.selectEdge(edge.id);
         }}
       >
-        <cylinderGeometry args={[radius, radius, 1, 10]} />
-        <meshBasicMaterial color={color} transparent opacity={opacity} />
+        <cylinderGeometry args={[0.16, 0.16, 1, 8]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
+      <Line points={[[0, -0.5, 0], [0, 0.5, 0]]} color={color} lineWidth={lineWidth * 4} transparent opacity={opacity * 0.1} depthWrite={false} />
+      <Line points={[[0, -0.5, 0], [0, 0.5, 0]]} color={color} lineWidth={lineWidth} transparent opacity={opacity} depthWrite={false} />
     </group>
   );
 }
 
 function CandidateNode({ suggestion }: { suggestion: AISuggestion }) {
   const pos = suggestion.position ?? { x: 0, y: 0, z: 0 };
+  const selected = useStore((s) => s.selectedSuggestionId === suggestion.id);
+  const selectSuggestion = useStore((s) => s.selectSuggestion);
   return (
     <group position={[pos.x, pos.y, pos.z]}>
+      <mesh
+        onClick={(event) => {
+          event.stopPropagation();
+          selectSuggestion(suggestion.id);
+        }}
+        onPointerOver={() => {
+          document.body.style.cursor = "pointer";
+        }}
+        onPointerOut={() => {
+          document.body.style.cursor = "default";
+        }}
+      >
+        <sphereGeometry args={[0.72, 24, 24]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
       <mesh>
-        <sphereGeometry args={[0.55, 24, 24]} />
+        <sphereGeometry args={[0.18, 20, 20]} />
         <meshStandardMaterial
-          color="#a5b4fc"
+          color={selected ? "#efbf77" : "#c8c1f2"}
           roughness={0.4}
           metalness={0.1}
           transparent
-          opacity={0.45}
+          opacity={selected ? 0.2 : 0.1}
+          depthWrite={false}
         />
       </mesh>
-      <Html position={[0, 1.15, 0]} center zIndexRange={[10, 0]}>
+      <Html position={[0, 0, 0]} center zIndexRange={[10, 0]}>
         <div
-          className="node-label"
-          style={{ opacity: 0.75, borderColor: "#a5b4fc" }}
+          className={`node-label candidate-node-label specular-node is-candidate ${selected ? "is-selected" : ""}`}
+          data-testid="candidate-node"
+          role="button"
+          tabIndex={0}
+          aria-label={`选择联想：${suggestion.content}`}
+          onClick={() => selectSuggestion(suggestion.id)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") selectSuggestion(suggestion.id);
+          }}
+          style={{ opacity: selected ? 1 : 0.7 }}
         >
           {suggestion.content}
         </div>
@@ -368,10 +557,17 @@ function CandidateEdge({ suggestion }: { suggestion: AISuggestion }) {
 
   return (
     <group ref={groupRef}>
-      <mesh>
-        <cylinderGeometry args={[0.06, 0.06, 1, 8]} />
-        <meshBasicMaterial color="#a5b4fc" transparent opacity={0.4} />
+      <mesh
+        onClick={(event) => {
+          event.stopPropagation();
+          useStore.getState().selectSuggestion(suggestion.id);
+        }}
+      >
+        <cylinderGeometry args={[0.16, 0.16, 1, 8]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
+      <Line points={[[0, -0.5, 0], [0, 0.5, 0]]} color="#aaa4df" lineWidth={3.5} transparent opacity={0.06} depthWrite={false} />
+      <Line points={[[0, -0.5, 0], [0, 0.5, 0]]} color="#9188d2" lineWidth={1} transparent opacity={0.38} depthWrite={false} dashed dashSize={0.16} gapSize={0.11} />
     </group>
   );
 }
@@ -379,6 +575,96 @@ function CandidateEdge({ suggestion }: { suggestion: AISuggestion }) {
 function CameraController() {
   const cameraCmd = useStore((s) => s.cameraCmd);
   const { camera } = useThree();
+  const pressedKeysRef = useRef(new Set<string>());
+  const moveRef = useRef(new THREE.Vector3());
+  const forwardRef = useRef(new THREE.Vector3());
+  const rightRef = useRef(new THREE.Vector3());
+  const upRef = useRef(new THREE.Vector3());
+  const transitionRef = useRef<{
+    startedAt: number;
+    duration: number;
+    fromCamera: THREE.Vector3;
+    toCamera: THREE.Vector3;
+    fromTarget: THREE.Vector3;
+    toTarget: THREE.Vector3;
+  } | null>(null);
+
+  useEffect(() => {
+    const isEditing = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null;
+      return Boolean(element?.matches("input, textarea, select") || element?.isContentEditable);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditing(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (VIEW_MOVEMENT_CODES.has(event.code) || event.code === "ShiftLeft" || event.code === "ShiftRight") {
+        pressedKeysRef.current.add(event.code);
+        if (event.code.startsWith("Arrow")) event.preventDefault();
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      pressedKeysRef.current.delete(event.code);
+    };
+    const clearKeys = () => pressedKeysRef.current.clear();
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", clearKeys);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", clearKeys);
+    };
+  }, []);
+
+  useFrame((_, delta) => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+
+    const keys = pressedKeysRef.current;
+    const move = moveRef.current.set(0, 0, 0);
+    const forward = camera.getWorldDirection(forwardRef.current).normalize();
+    const up = upRef.current.copy(camera.up).normalize();
+    const accelerated = keys.has("ShiftLeft") || keys.has("ShiftRight");
+    const turnDirection = (keys.has("KeyQ") ? 1 : 0) - (keys.has("KeyE") ? 1 : 0);
+
+    if (turnDirection !== 0) {
+      transitionRef.current = null;
+      const targetDistance = Math.max(camera.position.distanceTo(controls.target), 0.1);
+      const turnSpeed = accelerated ? 2.9 : 1.8;
+      forward.applyAxisAngle(up, turnDirection * turnSpeed * Math.min(delta, 0.05));
+      controls.target.copy(camera.position).addScaledVector(forward, targetDistance);
+    }
+
+    const right = rightRef.current.crossVectors(forward, up).normalize();
+    if (keys.has("KeyW") || keys.has("ArrowUp")) move.add(forward);
+    if (keys.has("KeyS") || keys.has("ArrowDown")) move.sub(forward);
+    if (keys.has("KeyD") || keys.has("ArrowRight")) move.add(right);
+    if (keys.has("KeyA") || keys.has("ArrowLeft")) move.sub(right);
+
+    if (move.lengthSq() > 0) {
+      transitionRef.current = null;
+      move.normalize().multiplyScalar((accelerated ? 32 : 15) * Math.min(delta, 0.05));
+      camera.position.add(move);
+      controls.target.add(move);
+    }
+
+    if (move.lengthSq() > 0 || turnDirection !== 0) {
+      camera.lookAt(controls.target);
+      controls.update();
+      return;
+    }
+
+    const transition = transitionRef.current;
+    if (!transition) return;
+    const elapsed = performance.now() - transition.startedAt;
+    const progress = Math.min(elapsed / transition.duration, 1);
+    // smootherstep：起点和终点速度都为 0，避免突然启动或刹停。
+    const eased = progress * progress * progress * (progress * (progress * 6 - 15) + 10);
+    camera.position.lerpVectors(transition.fromCamera, transition.toCamera, eased);
+    controls.target.lerpVectors(transition.fromTarget, transition.toTarget, eased);
+    camera.lookAt(controls.target);
+    controls.update();
+    if (progress >= 1) transitionRef.current = null;
+  });
 
   const fitGlobal = () => {
     const nodes = useStore.getState().idea?.nodes ?? [];
@@ -398,8 +684,11 @@ function CameraController() {
       const sphere = box.getBoundingSphere(new THREE.Sphere());
       toTarget.copy(sphere.center);
       const radius = Math.max(sphere.radius, 3);
-      const fov = (camera as THREE.PerspectiveCamera).fov;
-      const dist = (radius / Math.tan((fov * Math.PI) / 360)) * 1.4;
+      const perspectiveCamera = camera as THREE.PerspectiveCamera;
+      const verticalFov = (perspectiveCamera.fov * Math.PI) / 180;
+      const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * perspectiveCamera.aspect);
+      const fitFov = Math.min(verticalFov, horizontalFov);
+      const dist = (radius / Math.sin(fitFov / 2)) * 1.55;
       const dir = camera.position.clone().sub(toTarget);
       if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
       dir.normalize();
@@ -421,22 +710,42 @@ function CameraController() {
     if (cameraCmd.type === "global") {
       fitGlobal();
     } else {
-      const nodes = useStore.getState().idea?.nodes ?? [];
-      const node = nodes.find((n) => n.id === cameraCmd.nodeId);
       const controls = controlsRef.current;
-      if (!node || !controls) return;
-      const toTarget = new THREE.Vector3(
-        node.position.x,
-        node.position.y,
-        node.position.z,
-      );
-      const dir = camera.position.clone().sub(toTarget);
-      if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
-      dir.normalize();
-      camera.position.copy(toTarget).addScaledVector(dir, 14);
-      controls.target.copy(toTarget);
-      camera.lookAt(toTarget);
-      controls.update();
+      const livePosition = positionsRef.current.get(cameraCmd.nodeId);
+      const storedNode = useStore
+        .getState()
+        .idea?.nodes.find((node) => node.id === cameraCmd.nodeId);
+      if (!controls || (!livePosition && !storedNode)) return;
+
+      // 保留当前缩放与观察方向，只平移相机和控制中心。
+      // 这样被点击的节点会精确落在当前 Canvas 的几何中心，而不是被拉近。
+      const toTarget = livePosition
+        ? livePosition.clone()
+        : new THREE.Vector3(
+            storedNode!.position.x,
+            storedNode!.position.y,
+            storedNode!.position.z,
+          );
+      const cameraOffset = camera.position.clone().sub(controls.target);
+      if (cameraOffset.lengthSq() < 1e-6) cameraOffset.set(0, 0, 14);
+      const toCamera = toTarget.clone().add(cameraOffset);
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduceMotion) {
+        camera.position.copy(toCamera);
+        controls.target.copy(toTarget);
+        camera.lookAt(toTarget);
+        controls.update();
+      } else {
+        // 新的点击会直接替换上一段动画，因此连续切换节点也不会排队或卡顿。
+        transitionRef.current = {
+          startedAt: performance.now(),
+          duration: 520,
+          fromCamera: camera.position.clone(),
+          toCamera,
+          fromTarget: controls.target.clone(),
+          toTarget,
+        };
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraCmd]);

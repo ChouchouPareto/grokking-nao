@@ -1,14 +1,28 @@
 import { create } from "zustand";
-import type { AISuggestion, Idea, ThoughtEdge, ThoughtNode, Vec3 } from "./types";
+import type {
+  AIRequestMode,
+  AISuggestion,
+  BrainstormSummary,
+  Idea,
+  ThoughtEdge,
+  ThoughtNode,
+  Vec3,
+} from "./types";
 import { SCHEMA_VERSION } from "./types";
 import { getIdea, putIdea } from "./db";
 import { generateTitle, randomPos, uid } from "./utils";
 import { syncPositions } from "./graph";
-import { AIRequestError, fetchSuggestions, toAISuggestion } from "./ai";
+import {
+  AIRequestError,
+  fetchSuggestions,
+  fetchSummary,
+  toAISuggestion,
+  toIntentProfile,
+} from "./ai";
 
 export type SpaceMode = "browse" | "connect";
 export type SaveStatus = "idle" | "saving" | "saved" | "failed";
-export type AIStatus = "idle" | "loading" | "success" | "error";
+export type AIStatus = "idle" | "loading" | "success" | "error" | "blocked";
 export type CameraCommand =
   | { type: "global"; nonce: number }
   | { type: "focus"; nonce: number; nodeId: string };
@@ -28,11 +42,18 @@ interface IdeaStore {
   suggestions: AISuggestion[];
   aiStatus: AIStatus;
   aiMessage: string;
+  aiMode: AIRequestMode;
+  aiTriggerNodeIds: string[];
+  selectedSuggestionId: string | null;
+  summaryStatus: AIStatus;
+  summaryMessage: string;
+  summaryDraft: BrainstormSummary | null;
 
   loadIdea: (id: string) => Promise<void>;
   createIdea: (seed: string) => Promise<string>;
   updateTitle: (title: string) => void;
   addNodes: (texts: string[]) => void;
+  addNodeAt: (text: string, position: Vec3) => string | null;
   updateNodeText: (id: string, text: string) => void;
   setNodePosition: (id: string, pos: Vec3, pinned: boolean) => void;
   removeNode: (id: string) => void;
@@ -42,12 +63,16 @@ interface IdeaStore {
   setDiscovery: (id: string, isDiscovery: boolean, note?: string) => void;
   commitPositions: (positions: Record<string, Vec3>) => void;
 
-  requestSuggestions: () => Promise<void>;
+  requestSuggestions: (mode?: AIRequestMode, triggerNodeIds?: string[]) => Promise<void>;
   addAINode: (text: string, position: Vec3) => void;
   addAIEdge: (sourceNodeId: string, targetNodeId: string, note?: string) => void;
   acceptSuggestion: (id: string, editedContent?: string) => void;
   rejectSuggestion: (id: string) => void;
   clearSuggestions: () => void;
+  selectSuggestion: (id: string | null) => void;
+  toggleAutoRelationDiscovery: () => void;
+  generateSummary: (scope?: "all" | "focused") => Promise<void>;
+  saveSummary: () => void;
 
   setMode: (m: SpaceMode) => void;
   setConnectFrom: (id: string | null) => void;
@@ -59,18 +84,43 @@ interface IdeaStore {
   requestFocusView: (nodeId: string) => void;
 }
 
-function candidatePosition(s: AISuggestion, nodes: ThoughtNode[]): AISuggestion {
+function candidatePosition(s: AISuggestion, nodes: ThoughtNode[], index = 0): AISuggestion {
   if (s.type !== "node") return s;
   const related = nodes.find((n) => n.id === s.relatedNodeIds[0]);
-  const off = randomPos(4);
   const base = related?.position ?? { x: 0, y: 0, z: 0 };
+  const angle = -Math.PI / 2 + index * (Math.PI * 2 / 3);
+  const radius = 5.2;
   return {
     ...s,
-    position: { x: base.x + off.x, y: base.y + off.y, z: base.z + off.z },
+    position: {
+      x: base.x + Math.cos(angle) * radius,
+      y: base.y + Math.sin(angle) * radius,
+      z: base.z + (index - 1) * 1.2,
+    },
   };
 }
 
 let cameraNonce = 0;
+let relationTimer: ReturnType<typeof setTimeout> | null = null;
+const pendingRelationNodeIds = new Set<string>();
+const relationCache = new Map<string, AISuggestion[]>();
+
+function queueRelationProbe(nodeIds: string[]) {
+  nodeIds.forEach((id) => pendingRelationNodeIds.add(id));
+  if (relationTimer) clearTimeout(relationTimer);
+  relationTimer = setTimeout(() => {
+    const state = useStore.getState();
+    const ids = [...pendingRelationNodeIds];
+    pendingRelationNodeIds.clear();
+    relationTimer = null;
+    if (!state.idea?.autoRelationDiscovery || state.idea.nodes.length < 3) return;
+    if (state.aiStatus === "loading") {
+      queueRelationProbe(ids);
+      return;
+    }
+    void state.requestSuggestions("relation_probe", ids);
+  }, 3000);
+}
 
 export const useStore = create<IdeaStore>()((set, get) => {
   const persist = (idea: Idea) => {
@@ -116,6 +166,12 @@ export const useStore = create<IdeaStore>()((set, get) => {
     suggestions: [],
     aiStatus: "idle",
     aiMessage: "",
+    aiMode: "deep_expand",
+    aiTriggerNodeIds: [],
+    selectedSuggestionId: null,
+    summaryStatus: "idle",
+    summaryMessage: "",
+    summaryDraft: null,
 
     async loadIdea(id) {
       set({ loading: true, idea: null, notFound: false });
@@ -154,6 +210,8 @@ export const useStore = create<IdeaStore>()((set, get) => {
         edges: [],
         discoveryCount: 0,
         rejectedSummary: [],
+        autoRelationDiscovery: true,
+        summaries: [],
       };
       await putIdea(idea);
       return idea.id;
@@ -182,6 +240,25 @@ export const useStore = create<IdeaStore>()((set, get) => {
         }));
       if (newNodes.length === 0) return;
       mutate((idea) => ({ ...idea, nodes: [...idea.nodes, ...newNodes] }));
+    },
+
+    addNodeAt(text, position) {
+      const value = text.trim();
+      if (!value) return null;
+      const ts = now();
+      const node: ThoughtNode = {
+        id: uid(),
+        text: value,
+        source: "user",
+        status: "formal",
+        position,
+        isPositionPinned: true,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+      mutate((idea) => ({ ...idea, nodes: [...idea.nodes, node] }));
+      queueRelationProbe([node.id]);
+      return node.id;
     },
 
     updateNodeText(id, text) {
@@ -330,12 +407,35 @@ export const useStore = create<IdeaStore>()((set, get) => {
       set({ cameraCmd: { type: "focus", nonce: cameraNonce, nodeId } });
     },
 
-    async requestSuggestions() {
+    async requestSuggestions(mode = "deep_expand", triggerNodeIds = []) {
       const idea = get().idea;
       if (!idea || get().aiStatus === "loading") return;
       const ideaId = idea.id;
       const formalNodes = idea.nodes.filter((n) => n.status === "formal");
-      set({ aiStatus: "loading", aiMessage: "" });
+      const fingerprint = JSON.stringify({
+        ideaId,
+        mode,
+        triggerNodeIds: [...triggerNodeIds].sort(),
+        nodes: formalNodes.map((node) => [node.id, node.text]),
+        edges: idea.edges.map((edge) => [edge.sourceNodeId, edge.targetNodeId, edge.note]),
+      });
+      if (mode === "relation_probe" && relationCache.has(fingerprint)) {
+        set({
+          suggestions: relationCache.get(fingerprint) ?? [],
+          aiStatus: "success",
+          aiMode: mode,
+          aiTriggerNodeIds: triggerNodeIds,
+          aiMessage: "",
+        });
+        return;
+      }
+      set({
+        aiStatus: "loading",
+        aiMessage: "",
+        aiMode: mode,
+        aiTriggerNodeIds: triggerNodeIds,
+        selectedSuggestionId: null,
+      });
       try {
         const resp = await fetchSuggestions({
           idea_id: idea.id,
@@ -351,11 +451,18 @@ export const useStore = create<IdeaStore>()((set, get) => {
             })),
           rejected_summary: idea.rejectedSummary ?? [],
           focused_node_id: get().focusedNodeId,
+          mode,
+          trigger_node_ids: triggerNodeIds,
         });
         if (get().idea?.id !== ideaId) return;
-        const suggestions = resp.suggestions.map((s) =>
-          candidatePosition(toAISuggestion(s, resp.request_id), idea.nodes),
+        const suggestions = resp.suggestions.map((s, index) =>
+          candidatePosition(toAISuggestion(s, resp.request_id), idea.nodes, index),
         );
+        if (mode === "relation_probe") relationCache.set(fingerprint, suggestions);
+        const intentProfile = toIntentProfile(resp.intent_profile);
+        if (intentProfile) {
+          mutate((current) => ({ ...current, intentProfile }));
+        }
         set({
           suggestions,
           aiStatus: "success",
@@ -366,7 +473,11 @@ export const useStore = create<IdeaStore>()((set, get) => {
         if (get().idea?.id !== ideaId) return;
         const msg =
           e instanceof AIRequestError ? e.message : "AI 暂时不可用，请重试";
-        set({ suggestions: [], aiStatus: "error", aiMessage: msg });
+        set({
+          suggestions: [],
+          aiStatus: e instanceof AIRequestError && e.code === "content_blocked" ? "blocked" : "error",
+          aiMessage: msg,
+        });
       }
     },
 
@@ -427,6 +538,7 @@ export const useStore = create<IdeaStore>()((set, get) => {
         }
       }
       dropSuggestion(id);
+      set({ selectedSuggestionId: null });
     },
 
     rejectSuggestion(id) {
@@ -437,10 +549,84 @@ export const useStore = create<IdeaStore>()((set, get) => {
         rejectedSummary: [...(idea.rejectedSummary ?? []), s.content],
       }));
       dropSuggestion(id);
+      set({ selectedSuggestionId: null });
     },
 
     clearSuggestions() {
-      set({ suggestions: [], aiStatus: "idle", aiMessage: "" });
+      set({ suggestions: [], aiStatus: "idle", aiMessage: "", selectedSuggestionId: null });
+    },
+
+    selectSuggestion(id) {
+      set({ selectedSuggestionId: id });
+    },
+
+    toggleAutoRelationDiscovery() {
+      mutate((idea) => ({
+        ...idea,
+        autoRelationDiscovery: !idea.autoRelationDiscovery,
+      }));
+    },
+
+    async generateSummary(scope = "all") {
+      const idea = get().idea;
+      if (!idea || idea.nodes.length < 2 || get().summaryStatus === "loading") return;
+      const focusedId = get().focusedNodeId;
+      const includedIds = new Set<string>();
+      if (scope === "focused" && focusedId) {
+        includedIds.add(focusedId);
+        idea.edges.forEach((edge) => {
+          if (edge.sourceNodeId === focusedId) includedIds.add(edge.targetNodeId);
+          if (edge.targetNodeId === focusedId) includedIds.add(edge.sourceNodeId);
+        });
+      } else {
+        idea.nodes.forEach((node) => includedIds.add(node.id));
+      }
+      const nodes = idea.nodes.filter((node) => includedIds.has(node.id));
+      const edges = idea.edges.filter(
+        (edge) => includedIds.has(edge.sourceNodeId) && includedIds.has(edge.targetNodeId),
+      );
+      set({ summaryStatus: "loading", summaryMessage: "", summaryDraft: null });
+      try {
+        const response = await fetchSummary({
+          idea_id: idea.id,
+          seed_text: idea.seedText,
+          title: idea.title,
+          nodes: nodes.map((node) => ({ id: node.id, text: node.text })),
+          edges: edges.map((edge) => ({
+            source_node_id: edge.sourceNodeId,
+            target_node_id: edge.targetNodeId,
+            note: edge.note,
+          })),
+          focused_node_id: scope === "focused" ? focusedId : null,
+          scope,
+        });
+        const raw = response.summary;
+        set({
+          summaryStatus: "success",
+          summaryDraft: {
+            id: uid(),
+            title: raw.title,
+            overview: raw.overview,
+            themes: raw.themes ?? [],
+            keyConnections: raw.key_connections ?? [],
+            openQuestions: raw.open_questions ?? [],
+            nextDirections: raw.next_directions ?? [],
+            createdAt: Date.now(),
+          },
+        });
+      } catch (error) {
+        set({
+          summaryStatus: "error",
+          summaryMessage: error instanceof Error ? error.message : "阶段总结生成失败",
+        });
+      }
+    },
+
+    saveSummary() {
+      const draft = get().summaryDraft;
+      if (!draft) return;
+      mutate((idea) => ({ ...idea, summaries: [draft, ...(idea.summaries ?? [])] }));
+      set({ summaryMessage: "阶段总结已保存" });
     },
   };
 });

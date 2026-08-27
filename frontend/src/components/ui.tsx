@@ -18,7 +18,7 @@ export function Button({
   className?: string;
 }) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed select-none";
+    "specular-button inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed select-none";
   const variants: Record<string, string> = {
     default: "bg-surface-2 text-ink border border-line hover:bg-line",
     primary: "bg-primary text-white hover:bg-primary-bright",
