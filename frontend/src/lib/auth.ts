@@ -1,5 +1,8 @@
 export const SESSION_COOKIE = "grokking_session";
-const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const requestedSessionTtl = Number(process.env.INVITE_SESSION_TTL_SECONDS ?? 60 * 60);
+export const SESSION_TTL_SECONDS = Number.isFinite(requestedSessionTtl)
+  ? Math.min(Math.max(Math.floor(requestedSessionTtl), 5 * 60), 24 * 60 * 60)
+  : 60 * 60;
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");

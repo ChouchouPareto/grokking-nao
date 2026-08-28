@@ -4,7 +4,7 @@ import unicodedata
 from .. import schemas
 
 
-SAFETY_MESSAGE = "该内容涉及政治敏感、违法犯罪、暴力、色情或违背公序良俗的信息，AI 无法继续联想。请修改相关关键词后再试。"
+SAFETY_MESSAGE = "该内容涉及敏感信息、危险行为或试图改变系统规则，AI 无法继续联想。请修改相关关键词后再试。"
 
 
 class ContentSafetyError(Exception):
@@ -16,6 +16,11 @@ class ContentSafetyError(Exception):
 
 
 _CATEGORY_TERMS: dict[str, tuple[str, ...]] = {
+    "prompt_injection": (
+        "忽略以上指令", "忽略之前指令", "无视系统提示", "泄露系统提示词", "输出系统提示词",
+        "展示系统消息", "解除安全限制", "绕过安全策略", "开发者模式", "越狱提示词",
+        "ignorepreviousinstructions", "revealsystemprompt", "jailbreak", "developer mode",
+    ),
     "political_sensitive": (
         "共产党", "国民党", "中共", "中共中央", "反党", "颠覆政权", "推翻政府",
         "政治暗杀", "政变", "台独", "港独", "藏独", "疆独", "法轮功",
@@ -24,7 +29,8 @@ _CATEGORY_TERMS: dict[str, tuple[str, ...]] = {
         "杀人", "谋杀", "暗杀", "绑架", "勒索", "抢劫", "强奸", "恐怖袭击",
         "炸弹", "爆炸物", "枪支", "贩毒", "制毒", "毒品", "洗钱", "诈骗",
         "入侵系统", "黑客攻击", "犯罪", "自杀", "自残", "虐杀",
-        "murder", "bomb", "terrorist", "suicide", "killpeople",
+        "murder", "bomb", "terrorist", "suicide", "killpeople", "制造武器", "制作毒药",
+        "规避警方", "销毁证据", "躲避侦查", "实施犯罪",
     ),
     "sexual_content": (
         "色情", "成人视频", "性爱", "性交", "裸聊", "卖淫", "嫖娼",
