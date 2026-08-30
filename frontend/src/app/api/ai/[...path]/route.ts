@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const ALLOWED_PATHS = new Set(["suggestions", "summary"]);
+const ALLOWED_PATHS = new Set(["suggestions", "summary", "directions", "business-lens", "environment"]);
 
 export async function POST(
   request: NextRequest,
@@ -43,4 +43,3 @@ export async function POST(
     );
   }
 }
-

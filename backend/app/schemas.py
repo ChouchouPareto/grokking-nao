@@ -76,3 +76,79 @@ class SummaryContent(BaseModel):
 class SummaryResponse(BaseModel):
     request_id: str
     summary: SummaryContent
+
+
+class DirectionRequest(BaseModel):
+    seed_text: str = Field(min_length=1, max_length=500)
+    thinking_mode: Literal["business", "daily"] = "business"
+    location_label: Optional[str] = Field(default=None, max_length=120)
+
+
+class DirectionCandidate(BaseModel):
+    id: str
+    text: str
+    reason: str
+
+
+class DirectionResponse(BaseModel):
+    request_id: str
+    candidates: list[DirectionCandidate]
+
+
+class BusinessLensRequest(BaseModel):
+    idea_id: str
+    seed_text: str = Field(min_length=1, max_length=500)
+    direction: str = Field(default="", max_length=300)
+    location_label: Optional[str] = Field(default=None, max_length=120)
+    rejected_summary: list[str] = Field(default_factory=list)
+
+
+class HorizontalOpportunity(BaseModel):
+    id: str
+    label: str
+    relation: str
+    reason: str
+
+
+class VerticalChainNode(BaseModel):
+    id: str
+    label: str
+    stage: Literal["upstream", "core", "downstream", "support"]
+    reason: str
+
+
+class BusinessLensContent(BaseModel):
+    horizontal: list[HorizontalOpportunity]
+    vertical: list[VerticalChainNode]
+    insights: list[str]
+
+
+class BusinessLensResponse(BaseModel):
+    request_id: str
+    lens: BusinessLensContent
+
+
+class EnvironmentRequest(BaseModel):
+    idea_id: str
+    seed_text: str = Field(min_length=1, max_length=500)
+    direction: str = Field(default="", max_length=300)
+    thinking_stage: str = Field(default="发散", max_length=50)
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    location_label: Optional[str] = Field(default=None, max_length=120)
+
+
+class EnvironmentSuggestion(BaseModel):
+    id: str
+    kind: Literal["walk", "observe", "listen", "pause"]
+    title: str
+    instruction: str
+    duration_minutes: int = Field(ge=3, le=90)
+    place_label: Optional[str] = None
+    is_generic: bool = True
+
+
+class EnvironmentResponse(BaseModel):
+    request_id: str
+    suggestions: list[EnvironmentSuggestion]
+    location_mode: Literal["nearby", "generic"]

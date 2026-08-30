@@ -2,8 +2,53 @@ export type Vec3 = { x: number; y: number; z: number };
 
 export type NodeSource = "user" | "ai";
 export type NodeStatus = "formal" | "candidate";
+export type NodeSemanticRole = "root" | "horizontal" | "vertical" | "free";
 export type EdgeSource = "user" | "ai";
 export type EdgeStatus = "formal" | "candidate";
+export type ThinkingMode = "business" | "daily";
+export type DirectionSource = "user" | "ai" | "open";
+export type LocationPermission = "idle" | "requesting" | "granted" | "denied" | "unavailable";
+
+export interface DirectionIntent {
+  text: string;
+  source: DirectionSource;
+  confirmedAt?: number;
+}
+
+export interface LocationContext {
+  permission: LocationPermission;
+  label: string;
+  latitude?: number;
+  longitude?: number;
+  accuracyMeters?: number;
+  updatedAt?: number;
+}
+
+export interface DirectionCandidate {
+  id: string;
+  text: string;
+  reason: string;
+}
+
+export interface ThinkingBranch {
+  id: string;
+  rootNodeId: string;
+  title: string;
+  direction: string;
+  status: "active" | "archived";
+  createdAt: number;
+  updatedAt: number;
+  nodeIds: string[];
+}
+
+export interface NodeThoughtRecord {
+  id: string;
+  nodeId: string;
+  content: string;
+  source: "user" | "ai";
+  createdAt: number;
+  updatedAt: number;
+}
 
 export interface ThoughtNode {
   id: string;
@@ -14,6 +59,9 @@ export interface ThoughtNode {
   isPositionPinned: boolean;
   createdAt: number;
   updatedAt: number;
+  semanticRole?: NodeSemanticRole;
+  chainStage?: "upstream" | "core" | "downstream" | "support";
+  branchId?: string;
 }
 
 export interface ThoughtEdge {
@@ -40,7 +88,8 @@ export type AIRequestMode =
   | "intent_profile"
   | "relation_probe"
   | "node_brainstorm"
-  | "deep_expand";
+  | "deep_expand"
+  | "business_lens";
 
 export interface IntentProfile {
   primaryIntent: string;
@@ -65,6 +114,26 @@ export interface AISuggestion {
   strength?: number;
   status: SuggestionStatus;
   position?: Vec3; // 前端补充：node 类型候选的临时位置
+  semanticRole?: NodeSemanticRole;
+  chainStage?: "upstream" | "core" | "downstream" | "support";
+}
+
+export interface BusinessInsight {
+  id: string;
+  content: string;
+  status: "candidate" | "saved";
+  createdAt: number;
+}
+
+export interface EnvironmentSuggestion {
+  id: string;
+  kind: "walk" | "observe" | "listen" | "pause";
+  title: string;
+  instruction: string;
+  durationMinutes: number;
+  placeLabel?: string;
+  isGeneric: boolean;
+  createdAt: number;
 }
 
 export interface BrainstormSummary {
@@ -93,6 +162,20 @@ export interface Idea {
   intentProfile?: IntentProfile;
   autoRelationDiscovery: boolean;
   summaries: BrainstormSummary[];
+  thinkingMode: ThinkingMode;
+  direction: DirectionIntent;
+  locationContext: LocationContext;
+  branches: ThinkingBranch[];
+  nodeThoughtRecords: NodeThoughtRecord[];
+  businessInsights: BusinessInsight[];
+  environmentSuggestions: EnvironmentSuggestion[];
 }
 
-export const SCHEMA_VERSION = 3;
+export interface CreateIdeaOptions {
+  thinkingMode?: ThinkingMode;
+  directionText?: string;
+  directionSource?: DirectionSource;
+  locationContext?: LocationContext;
+}
+
+export const SCHEMA_VERSION = 4;

@@ -66,5 +66,19 @@ function normalizeIdea(raw: Idea): Idea {
     rejectedSummary: raw.rejectedSummary ?? [],
     autoRelationDiscovery: raw.autoRelationDiscovery ?? true,
     summaries: raw.summaries ?? [],
+    thinkingMode: raw.thinkingMode ?? "daily",
+    direction: raw.direction ?? { text: "", source: "open" },
+    locationContext: raw.locationContext ?? { permission: "idle", label: "" },
+    branches: (raw.branches ?? []).map((branch) => ({
+      ...branch,
+      nodeIds: branch.nodeIds ?? [branch.rootNodeId],
+    })),
+    nodeThoughtRecords: raw.nodeThoughtRecords ?? [],
+    businessInsights: raw.businessInsights ?? [],
+    environmentSuggestions: raw.environmentSuggestions ?? [],
+    nodes: (raw.nodes ?? []).map((node, index) => ({
+      ...node,
+      semanticRole: node.semanticRole ?? (index === 0 && node.text === raw.seedText ? "root" : "free"),
+    })),
   };
 }

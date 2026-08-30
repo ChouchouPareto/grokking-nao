@@ -3,6 +3,7 @@ import type {
   AIRequestMode,
   AISuggestion,
   BrainstormSummary,
+  CreateIdeaOptions,
   Idea,
   ThoughtEdge,
   ThoughtNode,
@@ -14,6 +15,8 @@ import { generateTitle, randomPos, uid } from "./utils";
 import { syncPositions } from "./graph";
 import {
   AIRequestError,
+  fetchBusinessLens,
+  fetchEnvironmentSuggestions,
   fetchSuggestions,
   fetchSummary,
   toAISuggestion,
@@ -48,15 +51,19 @@ interface IdeaStore {
   summaryStatus: AIStatus;
   summaryMessage: string;
   summaryDraft: BrainstormSummary | null;
+  environmentStatus: AIStatus;
+  environmentMessage: string;
 
   loadIdea: (id: string) => Promise<void>;
-  createIdea: (seed: string) => Promise<string>;
+  createIdea: (seed: string, options?: CreateIdeaOptions) => Promise<string>;
   updateTitle: (title: string) => void;
   addNodes: (texts: string[]) => void;
   addNodeAt: (text: string, position: Vec3) => string | null;
   updateNodeText: (id: string, text: string) => void;
   setNodePosition: (id: string, pos: Vec3, pinned: boolean) => void;
   removeNode: (id: string) => void;
+  createBranch: (rootNodeId: string, title: string, direction: string) => string | null;
+  addNodeThoughtRecord: (nodeId: string, content: string) => void;
   addEdge: (a: string, b: string) => void;
   removeEdge: (id: string) => void;
   setEdgeNote: (id: string, note: string) => void;
@@ -64,6 +71,8 @@ interface IdeaStore {
   commitPositions: (positions: Record<string, Vec3>) => void;
 
   requestSuggestions: (mode?: AIRequestMode, triggerNodeIds?: string[]) => Promise<void>;
+  requestBusinessLens: () => Promise<void>;
+  requestEnvironmentSuggestions: () => Promise<void>;
   addAINode: (text: string, position: Vec3) => void;
   addAIEdge: (sourceNodeId: string, targetNodeId: string, note?: string) => void;
   acceptSuggestion: (id: string, editedContent?: string) => void;
@@ -88,8 +97,12 @@ function candidatePosition(s: AISuggestion, nodes: ThoughtNode[], index = 0): AI
   if (s.type !== "node") return s;
   const related = nodes.find((n) => n.id === s.relatedNodeIds[0]);
   const base = related?.position ?? { x: 0, y: 0, z: 0 };
-  const angle = -Math.PI / 2 + index * (Math.PI * 2 / 3);
-  const radius = 5.2;
+  const angle = s.semanticRole === "horizontal"
+    ? -Math.PI / 2 + index * (Math.PI * 2 / 5)
+    : s.semanticRole === "vertical"
+      ? Math.PI + (index % 5) * 0.28
+      : -Math.PI / 2 + index * (Math.PI * 2 / 3);
+  const radius = s.semanticRole === "vertical" ? 7 + index * 1.25 : 5.2;
   return {
     ...s,
     position: {
@@ -172,6 +185,8 @@ export const useStore = create<IdeaStore>()((set, get) => {
     summaryStatus: "idle",
     summaryMessage: "",
     summaryDraft: null,
+    environmentStatus: "idle",
+    environmentMessage: "",
 
     async loadIdea(id) {
       set({ loading: true, idea: null, notFound: false });
@@ -193,11 +208,28 @@ export const useStore = create<IdeaStore>()((set, get) => {
         focusedNodeId: null,
         connectFromId: null,
         saveStatus: "saved",
+        suggestions: [],
+        aiStatus: "idle",
+        aiMessage: "",
+        selectedSuggestionId: null,
+        environmentStatus: "idle",
+        environmentMessage: "",
       });
     },
 
-    async createIdea(seed) {
+    async createIdea(seed, options = {}) {
       const ts = now();
+      const rootNode: ThoughtNode = {
+        id: uid(),
+        text: seed.trim(),
+        source: "user",
+        status: "formal",
+        position: { x: 0, y: 0, z: 0 },
+        isPositionPinned: true,
+        semanticRole: "root",
+        createdAt: ts,
+        updatedAt: ts,
+      };
       const idea: Idea = {
         id: uid(),
         schemaVersion: SCHEMA_VERSION,
@@ -206,12 +238,23 @@ export const useStore = create<IdeaStore>()((set, get) => {
         createdAt: ts,
         updatedAt: ts,
         lastOpenedAt: ts,
-        nodes: [],
+        nodes: [rootNode],
         edges: [],
         discoveryCount: 0,
         rejectedSummary: [],
         autoRelationDiscovery: true,
         summaries: [],
+        thinkingMode: options.thinkingMode ?? "daily",
+        direction: {
+          text: options.directionText?.trim() ?? "",
+          source: options.directionText?.trim() ? (options.directionSource ?? "user") : "open",
+          confirmedAt: options.directionText?.trim() ? ts : undefined,
+        },
+        locationContext: options.locationContext ?? { permission: "idle", label: "" },
+        branches: [],
+        nodeThoughtRecords: [],
+        businessInsights: [],
+        environmentSuggestions: [],
       };
       await putIdea(idea);
       return idea.id;
@@ -290,10 +333,79 @@ export const useStore = create<IdeaStore>()((set, get) => {
         edges: idea.edges.filter(
           (e) => e.sourceNodeId !== id && e.targetNodeId !== id,
         ),
+        nodeThoughtRecords: idea.nodeThoughtRecords.filter((record) => record.nodeId !== id),
+        branches: idea.branches
+          .filter((branch) => branch.rootNodeId !== id)
+          .map((branch) => ({ ...branch, nodeIds: branch.nodeIds.filter((nodeId) => nodeId !== id) })),
       }));
       set((s) => ({
         selectedNodeId: s.selectedNodeId === id ? null : s.selectedNodeId,
         focusedNodeId: s.focusedNodeId === id ? null : s.focusedNodeId,
+      }));
+    },
+
+    createBranch(rootNodeId, title, direction) {
+      const cleanTitle = title.trim();
+      const cleanDirection = direction.trim();
+      const idea = get().idea;
+      const root = idea?.nodes.find((node) => node.id === rootNodeId);
+      if (!idea || !root || !cleanTitle) return null;
+      const ts = now();
+      const branchId = uid();
+      const branchNodeId = uid();
+      mutate((current) => ({
+        ...current,
+        branches: [...current.branches, {
+          id: branchId,
+          rootNodeId,
+          title: cleanTitle,
+          direction: cleanDirection,
+          status: "active" as const,
+          createdAt: ts,
+          updatedAt: ts,
+          nodeIds: [rootNodeId, branchNodeId],
+        }],
+        nodes: [...current.nodes, {
+          id: branchNodeId,
+          text: cleanTitle,
+          source: "user" as const,
+          status: "formal" as const,
+          position: { x: root.position.x + 6, y: root.position.y + 3, z: root.position.z + 2 },
+          isPositionPinned: false,
+          semanticRole: "free" as const,
+          branchId,
+          createdAt: ts,
+          updatedAt: ts,
+        }],
+        edges: [...current.edges, {
+          id: uid(),
+          sourceNodeId: rootNodeId,
+          targetNodeId: branchNodeId,
+          source: "user" as const,
+          status: "formal" as const,
+          note: cleanDirection || "思考分支",
+          isDiscovery: false,
+          createdAt: ts,
+          updatedAt: ts,
+        }],
+      }));
+      return branchId;
+    },
+
+    addNodeThoughtRecord(nodeId, content) {
+      const text = content.trim();
+      if (!text || !get().idea?.nodes.some((node) => node.id === nodeId)) return;
+      const ts = now();
+      mutate((idea) => ({
+        ...idea,
+        nodeThoughtRecords: [...idea.nodeThoughtRecords, {
+          id: uid(),
+          nodeId,
+          content: text,
+          source: "user" as const,
+          createdAt: ts,
+          updatedAt: ts,
+        }],
       }));
     },
 
@@ -408,6 +520,10 @@ export const useStore = create<IdeaStore>()((set, get) => {
     },
 
     async requestSuggestions(mode = "deep_expand", triggerNodeIds = []) {
+      if (mode === "business_lens") {
+        await get().requestBusinessLens();
+        return;
+      }
       const idea = get().idea;
       if (!idea || get().aiStatus === "loading") return;
       const ideaId = idea.id;
@@ -481,6 +597,103 @@ export const useStore = create<IdeaStore>()((set, get) => {
       }
     },
 
+    async requestBusinessLens() {
+      const idea = get().idea;
+      if (!idea || idea.thinkingMode !== "business" || get().aiStatus === "loading") return;
+      const ideaId = idea.id;
+      const rootNode = idea.nodes.find((node) => node.semanticRole === "root") ?? idea.nodes[0];
+      if (!rootNode) return;
+      set({ aiStatus: "loading", aiMessage: "", aiMode: "business_lens", selectedSuggestionId: null });
+      try {
+        const response = await fetchBusinessLens({
+          idea_id: idea.id,
+          seed_text: idea.seedText,
+          direction: idea.direction.text,
+          location_label: idea.locationContext.label || undefined,
+          rejected_summary: idea.rejectedSummary ?? [],
+        });
+        if (get().idea?.id !== ideaId) return;
+        const horizontal: AISuggestion[] = response.lens.horizontal.map((item, index) => candidatePosition({
+          id: item.id,
+          requestId: response.request_id,
+          type: "node",
+          content: item.label,
+          reason: item.reason,
+          dimension: `横向 · ${item.relation}`,
+          relatedNodeIds: [rootNode.id],
+          relation: item.relation,
+          status: "pending",
+          semanticRole: "horizontal",
+        }, idea.nodes, index));
+        const vertical: AISuggestion[] = response.lens.vertical.map((item, index) => candidatePosition({
+          id: item.id,
+          requestId: response.request_id,
+          type: "node",
+          content: item.label,
+          reason: item.reason,
+          dimension: "纵向 · 产业链",
+          relatedNodeIds: [rootNode.id],
+          relation: "链路影响",
+          status: "pending",
+          semanticRole: "vertical",
+          chainStage: item.stage,
+        }, idea.nodes, index));
+        mutate((current) => ({
+          ...current,
+          businessInsights: response.lens.insights.map((content) => ({
+            id: uid(), content, status: "candidate" as const, createdAt: now(),
+          })),
+        }));
+        set({ suggestions: [...horizontal, ...vertical], aiStatus: "success", aiMessage: "" });
+      } catch (error) {
+        if (get().idea?.id !== ideaId) return;
+        const message = error instanceof Error ? error.message : "商业透视暂时不可用";
+        set({
+          suggestions: [],
+          aiStatus: error instanceof AIRequestError && error.code === "content_blocked" ? "blocked" : "error",
+          aiMessage: message,
+        });
+      }
+    },
+
+    async requestEnvironmentSuggestions() {
+      const idea = get().idea;
+      if (!idea || get().environmentStatus === "loading") return;
+      const ideaId = idea.id;
+      set({ environmentStatus: "loading", environmentMessage: "" });
+      try {
+        const response = await fetchEnvironmentSuggestions({
+          idea_id: idea.id,
+          seed_text: idea.seedText,
+          direction: idea.direction.text,
+          thinking_stage: idea.intentProfile?.thinkingStage ?? "发散",
+          latitude: idea.locationContext.latitude,
+          longitude: idea.locationContext.longitude,
+          location_label: idea.locationContext.label || undefined,
+        });
+        if (get().idea?.id !== ideaId) return;
+        mutate((current) => ({
+          ...current,
+          environmentSuggestions: response.suggestions.map((item) => ({
+            id: item.id,
+            kind: item.kind,
+            title: item.title,
+            instruction: item.instruction,
+            durationMinutes: item.duration_minutes,
+            placeLabel: item.place_label ?? undefined,
+            isGeneric: item.is_generic,
+            createdAt: now(),
+          })),
+        }));
+        set({
+          environmentStatus: "success",
+          environmentMessage: response.location_mode === "nearby" ? "已结合当前位置" : "当前为通用环境建议",
+        });
+      } catch (error) {
+        set({ environmentStatus: "error", environmentMessage: error instanceof Error ? error.message : "环境建议生成失败" });
+      }
+    },
+
     addAINode(text, position) {
       const t = text.trim();
       if (!t) return;
@@ -527,7 +740,37 @@ export const useStore = create<IdeaStore>()((set, get) => {
       if (!s) return;
       if (s.type === "node") {
         const text = (editedContent ?? s.content).trim();
-        if (text) get().addAINode(text, s.position ?? randomPos());
+        if (text && s.semanticRole) {
+          const ts = now();
+          const nodeId = uid();
+          const anchorId = s.relatedNodeIds[0];
+          mutate((idea) => ({
+            ...idea,
+            nodes: [...idea.nodes, {
+              id: nodeId,
+              text,
+              source: "ai" as const,
+              status: "formal" as const,
+              position: s.position ?? randomPos(),
+              isPositionPinned: false,
+              semanticRole: s.semanticRole,
+              chainStage: s.chainStage,
+              createdAt: ts,
+              updatedAt: ts,
+            }],
+            edges: anchorId ? [...idea.edges, {
+              id: uid(),
+              sourceNodeId: anchorId,
+              targetNodeId: nodeId,
+              source: "ai" as const,
+              status: "formal" as const,
+              note: s.relation || s.dimension,
+              isDiscovery: false,
+              createdAt: ts,
+              updatedAt: ts,
+            }] : idea.edges,
+          }));
+        } else if (text) get().addAINode(text, s.position ?? randomPos());
       } else if (s.type === "edge") {
         if (s.sourceNodeId && s.targetNodeId) {
           get().addAIEdge(

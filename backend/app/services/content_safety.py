@@ -81,6 +81,12 @@ def ensure_request_safe(req: schemas.SuggestRequest) -> None:
         raise ContentSafetyError(category)
 
 
+def ensure_text_safe(*values: str | None) -> None:
+    category = classify_text("\n".join(value or "" for value in values))
+    if category:
+        raise ContentSafetyError(category)
+
+
 def ensure_suggestions_safe(raw: list[dict]) -> None:
     fields = ("content", "reason", "dimension", "edge_note", "relation")
     text = "\n".join(
