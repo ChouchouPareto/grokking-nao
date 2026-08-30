@@ -19,6 +19,9 @@ import { randomPos } from "./utils";
 
 interface SimNode extends SimulationNodeDatum {
   id: string;
+  role: ThoughtNode["semanticRole"];
+  stage: ThoughtNode["chainStage"];
+  order: number;
 }
 type SimLink = SimulationLinkDatum<SimNode>;
 
@@ -60,11 +63,24 @@ export function startLayout(
 ): { stop: () => void } {
   activeSimulation?.stop();
 
-  const simNodes: SimNode[] = nodes.map((n) => {
-    const p = relayout ? randomPos() : n.position;
+  const simNodes: SimNode[] = nodes.map((n, order) => {
+    const semanticPosition = (): Vec3 => {
+      if (n.semanticRole === "root") return { x: 0, y: 0, z: 0 };
+      if (n.semanticRole === "horizontal") return { x: ((order % 5) - 2) * 6, y: 7, z: 0 };
+      if (n.semanticRole === "vertical") {
+        const x = n.chainStage === "upstream" ? -11 : n.chainStage === "downstream" ? 11 : 0;
+        const y = n.chainStage === "support" ? -7 : 0;
+        return { x, y, z: ((order % 4) - 1.5) * 4 };
+      }
+      return randomPos();
+    };
+    const p = relayout ? semanticPosition() : n.position;
     const pinned = !relayout && n.isPositionPinned;
     return {
       id: n.id,
+      role: n.semanticRole,
+      stage: n.chainStage,
+      order,
       x: p.x,
       y: p.y,
       z: p.z,
@@ -91,9 +107,9 @@ export function startLayout(
     )
     .force("charge", forceManyBody().strength(-5))
     .force("center", forceCenter(0, 0, 0))
-    .force("x", forceX(0).strength(0.05))
-    .force("y", forceY(0).strength(0.05))
-    .force("z", forceZ(0).strength(0.05))
+    .force("x", forceX(0).strength(0.035))
+    .force("y", forceY(0).strength(0.035))
+    .force("z", forceZ(0).strength(0.035))
     .force("collide", forceCollide().radius(2).strength(0.7))
     .alpha(1)
     .alphaDecay(0.08);

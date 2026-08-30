@@ -333,3 +333,128 @@ async def generate_summary(req: schemas.SummaryRequest) -> schemas.SummaryConten
         )
     except (TypeError, ValueError) as exc:
         raise ParseError("总结字段错误") from exc
+
+
+def _check_refusal(data: dict) -> None:
+    refusal = data.get("safety_refusal")
+    if isinstance(refusal, dict) and refusal.get("blocked") is True:
+        raise content_safety.ContentSafetyError(str(refusal.get("category") or "sensitive_content"))
+
+
+def _clean_short(value, limit: int = 120) -> str:
+    return str(value or "").strip()[:limit]
+
+
+def mock_directions(req: schemas.DirectionRequest) -> list[schemas.DirectionCandidate]:
+    if req.thinking_mode == "business":
+        values = [
+            ("沿价值流寻找被忽略的获利环节", "把主题放进完整交易与交付链路中观察"),
+            ("寻找共享客群但不同场景的相邻业态", "跨场景连接更容易出现组合机会"),
+            ("从最脆弱的供应环节反推新方案", "约束常比功能更能暴露真实机会"),
+        ]
+    else:
+        values = [
+            ("把最自然的答案完全反过来", "用反转打破已有路径依赖"),
+            ("借用一个毫不相关领域的规则", "跨域类比可能带来意外连接"),
+            ("换成局外人的视角重新描述", "视角变化会改变问题边界"),
+        ]
+    return [schemas.DirectionCandidate(id=uuid.uuid4().hex, text=text, reason=reason) for text, reason in values]
+
+
+def clean_directions(raw: object) -> list[schemas.DirectionCandidate]:
+    if not isinstance(raw, list):
+        raise ParseError("方向候选结构错误")
+    items: list[schemas.DirectionCandidate] = []
+    for item in raw:
+        if len(items) >= 3:
+            break
+        if not isinstance(item, dict):
+            continue
+        text = _clean_short(item.get("text"), 80)
+        reason = _clean_short(item.get("reason"), 120)
+        if text and reason and text not in {candidate.text for candidate in items}:
+            items.append(schemas.DirectionCandidate(id=uuid.uuid4().hex, text=text, reason=reason))
+    content_safety.ensure_text_safe(*(f"{item.text} {item.reason}" for item in items))
+    return items
+
+
+async def generate_directions(req: schemas.DirectionRequest) -> list[schemas.DirectionCandidate]:
+    content_safety.ensure_text_safe(req.seed_text, req.location_label)
+    if is_mock():
+        return mock_directions(req)
+    text = await llm.chat([
+        {"role": "system", "content": prompts.DIRECTION_SYSTEM_PROMPT},
+        {"role": "user", "content": prompts.build_direction_prompt(req)},
+    ])
+    data = _extract_json(text)
+    if not isinstance(data, dict):
+        raise ParseError("方向顶层结构错误")
+    _check_refusal(data)
+    return clean_directions(data.get("candidates", []))
+
+
+def mock_business_lens(req: schemas.BusinessLensRequest) -> schemas.BusinessLensContent:
+    theme = req.seed_text.strip()[:40]
+    horizontal = [
+        ("相邻消费场景", "共享客群"),
+        ("互补服务", "互补"),
+        ("替代解决方案", "替代"),
+        ("内容与体验", "跨界组合"),
+        ("社区渠道", "共享渠道"),
+    ]
+    vertical = [
+        ("原料与供给", "upstream"), ("筛选与采购", "upstream"),
+        ("产品与体验设计", "core"), ("生产交付", "core"),
+        ("渠道触达", "downstream"), ("复购与口碑", "downstream"),
+        ("数据与工具", "support"),
+    ]
+    return schemas.BusinessLensContent(
+        horizontal=[schemas.HorizontalOpportunity(id=uuid.uuid4().hex, label=label, relation=relation, reason=f"观察‘{theme}’与{label}之间的价值迁移") for label, relation in horizontal],
+        vertical=[schemas.VerticalChainNode(id=uuid.uuid4().hex, label=label, stage=stage, reason=f"{label}可能改变‘{theme}’的成立条件") for label, stage in vertical],
+        insights=[f"‘{theme}’的机会可能不只在产品本身，而在相邻场景与链路断点的组合。"],
+    )
+
+
+def clean_business_lens(data: dict) -> schemas.BusinessLensContent:
+    horizontal: list[schemas.HorizontalOpportunity] = []
+    for item in data.get("horizontal", []):
+        if len(horizontal) >= 5 or not isinstance(item, dict):
+            continue
+        label = _clean_short(item.get("label"), 80)
+        relation = _clean_short(item.get("relation"), 30)
+        reason = _clean_short(item.get("reason"), 140)
+        if label and reason:
+            horizontal.append(schemas.HorizontalOpportunity(id=uuid.uuid4().hex, label=label, relation=relation or "跨界组合", reason=reason))
+    vertical: list[schemas.VerticalChainNode] = []
+    for item in data.get("vertical", []):
+        if len(vertical) >= 10 or not isinstance(item, dict):
+            continue
+        label = _clean_short(item.get("label"), 80)
+        stage = item.get("stage")
+        reason = _clean_short(item.get("reason"), 140)
+        if label and reason and stage in ("upstream", "core", "downstream", "support"):
+            vertical.append(schemas.VerticalChainNode(id=uuid.uuid4().hex, label=label, stage=stage, reason=reason))
+    insights = [_clean_short(item, 180) for item in data.get("insights", []) if _clean_short(item, 180)][:2]
+    content_safety.ensure_text_safe(
+        *(f"{item.label} {item.relation} {item.reason}" for item in horizontal),
+        *(f"{item.label} {item.reason}" for item in vertical),
+        *insights,
+    )
+    if len(horizontal) < 3 or len(vertical) < 5 or not insights:
+        raise ParseError("商业透视内容不足")
+    return schemas.BusinessLensContent(horizontal=horizontal, vertical=vertical, insights=insights)
+
+
+async def generate_business_lens(req: schemas.BusinessLensRequest) -> schemas.BusinessLensContent:
+    content_safety.ensure_text_safe(req.seed_text, req.direction, req.location_label, *req.rejected_summary)
+    if is_mock():
+        return mock_business_lens(req)
+    text = await llm.chat([
+        {"role": "system", "content": prompts.BUSINESS_LENS_SYSTEM_PROMPT},
+        {"role": "user", "content": prompts.build_business_lens_prompt(req)},
+    ])
+    data = _extract_json(text)
+    if not isinstance(data, dict):
+        raise ParseError("商业透视顶层结构错误")
+    _check_refusal(data)
+    return clean_business_lens(data)

@@ -2,11 +2,13 @@
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
-import type { Idea } from "@/lib/types";
+import type { DirectionCandidate, Idea, LocationContext, ThinkingMode } from "@/lib/types";
 import { deleteIdea, duplicateIdea, listIdeas } from "@/lib/db";
 import { useStore } from "@/lib/store";
 import { formatTime } from "@/lib/utils";
 import { Button, Modal } from "@/components/ui";
+import { fetchDirectionSuggestions } from "@/lib/ai";
+import { LocationRequestError, requestCurrentLocation } from "@/lib/location";
 
 type AtmosphereStyle = CSSProperties & {
   "--ambient-a": string;
@@ -72,6 +74,13 @@ export default function Home() {
   const [seed, setSeed] = useState("");
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [creating, setCreating] = useState(false);
+  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("business");
+  const [direction, setDirection] = useState("");
+  const [directionSource, setDirectionSource] = useState<"user" | "ai">("user");
+  const [directionCandidates, setDirectionCandidates] = useState<DirectionCandidate[]>([]);
+  const [directionLoading, setDirectionLoading] = useState(false);
+  const [directionMessage, setDirectionMessage] = useState("");
+  const [location, setLocation] = useState<LocationContext>({ permission: "idle", label: "" });
   const [menuIdeaId, setMenuIdeaId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Idea | null>(null);
   const animatedExample = useTypewriterExamples(seed.length === 0);
@@ -85,8 +94,48 @@ export default function Home() {
     const text = seed.trim();
     if (!text || creating) return;
     setCreating(true);
-    const id = await createIdea(text);
+    const id = await createIdea(text, {
+      thinkingMode,
+      directionText: direction,
+      directionSource,
+      locationContext: location,
+    });
     router.push(`/idea/${id}`);
+  };
+
+  const suggestDirections = async () => {
+    const text = seed.trim();
+    if (!text || directionLoading) {
+      setDirectionMessage("先写下你正在思考的主题");
+      return;
+    }
+    setDirectionLoading(true);
+    setDirectionMessage("");
+    try {
+      const response = await fetchDirectionSuggestions({
+        seed_text: text,
+        thinking_mode: thinkingMode,
+        location_label: location.label || undefined,
+      });
+      setDirectionCandidates(response.candidates.slice(0, 3));
+    } catch (error) {
+      setDirectionMessage(error instanceof Error ? error.message : "暂时无法生成方向建议");
+    } finally {
+      setDirectionLoading(false);
+    }
+  };
+
+  const authorizeLocation = async () => {
+    setLocation({ permission: "requesting", label: "正在获取位置…" });
+    try {
+      setLocation(await requestCurrentLocation());
+    } catch (error) {
+      if (error instanceof LocationRequestError) {
+        setLocation({ permission: error.permission, label: error.message });
+      } else {
+        setLocation({ permission: "unavailable", label: "暂时无法获取位置" });
+      }
+    }
   };
 
   const atmosphere = atmosphereFor(ideas[0]?.seedText);
@@ -105,7 +154,7 @@ export default function Home() {
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.22em] text-primary-bright">Spatial thinking workspace</p>
             <h1 className="mt-3 text-4xl font-semibold tracking-tight text-ink">Grokking<span className="text-primary">恼</span></h1>
-            <p className="mt-2 text-sm text-muted">选择一个项目，直接回到它的 3D 思考现场。</p>
+            <p className="mt-2 text-sm text-muted">从一个念头出发，看见商业链路与意外连接。</p>
           </div>
           <div className="hidden items-center gap-2 md:flex">
             <span className="glass-chip rounded-full px-3 py-1.5 text-xs text-muted">本地保存 · {ideas.length} 个项目</span>
@@ -113,7 +162,64 @@ export default function Home() {
           </div>
         </header>
 
-        <section aria-label="项目列表">
+        <section className="glass-inset rounded-3xl p-5 md:p-8" aria-label="开始新的思考">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary-bright">Start with a thought</p>
+              <h2 className="mt-2 text-xl font-semibold text-ink">你现在想看透什么？</h2>
+              <p className="mt-1 text-sm text-muted">先给主题，再决定是拆商业链路，还是自由发散。</p>
+            </div>
+            <div className="thinking-mode-switch" aria-label="思考模式">
+              <button type="button" aria-pressed={thinkingMode === "business"} onClick={() => setThinkingMode("business")} className={thinkingMode === "business" ? "is-active" : ""}>
+                <span>商业深思</span><small>横向业态 · 纵向链路</small>
+              </button>
+              <button type="button" aria-pressed={thinkingMode === "daily"} onClick={() => setThinkingMode("daily")} className={thinkingMode === "daily" ? "is-active" : ""}>
+                <span>日常发散</span><small>联想 · 涌现 · 记录</small>
+              </button>
+            </div>
+          </div>
+
+          <div className="relative mt-6">
+            {!seed && (
+              <span className="typewriter-hint pointer-events-none absolute left-5 top-5 z-10 max-w-[calc(100%-2.5rem)] text-sm leading-7 text-muted md:left-6" aria-hidden="true">
+                <span className="mr-2 opacity-70">例如</span>{animatedExample}<i />
+              </span>
+            )}
+            <textarea id="seed" aria-label="思考主题" value={seed} onChange={(e) => { setSeed(e.target.value); setDirectionCandidates([]); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) onSubmit(); }} rows={3} className="inset-input min-h-28 w-full resize-none rounded-2xl px-5 py-5 text-base leading-7 text-ink outline-none focus:ring-2 focus:ring-primary/50 md:px-6" />
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto]">
+            <div className="direction-field">
+              <label htmlFor="direction" className="text-xs font-medium text-muted">这次想往什么方向想？ <span className="font-normal">（可以留空）</span></label>
+              <input id="direction" value={direction} onChange={(event) => { setDirection(event.target.value); setDirectionSource("user"); }} placeholder={thinkingMode === "business" ? "例如：先看供应链里最容易被忽略的利润点" : "例如：找一个完全反常识的连接"} className="mt-2 min-h-12 w-full bg-transparent text-sm text-ink outline-none placeholder:text-muted/70" />
+            </div>
+            <Button className="min-h-14 self-end lg:min-w-32" disabled={!seed.trim() || directionLoading} onClick={() => void suggestDirections()}>{directionLoading ? "正在思考…" : "AI 建议方向"}</Button>
+          </div>
+
+          {directionCandidates.length > 0 && (
+            <div className="mt-3 grid gap-2 md:grid-cols-3" aria-label="AI方向候选">
+              {directionCandidates.map((candidate) => (
+                <button key={candidate.id} type="button" onClick={() => { setDirection(candidate.text); setDirectionSource("ai"); }} className={`direction-candidate ${direction === candidate.text ? "is-selected" : ""}`}>
+                  <span>{candidate.text}</span><small>{candidate.reason}</small>
+                </button>
+              ))}
+            </div>
+          )}
+          {directionMessage && <p className="mt-3 text-xs text-danger" role="status">{directionMessage}</p>}
+
+          <div className="mt-5 flex flex-col gap-3 border-t border-white/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <button type="button" onClick={() => void authorizeLocation()} className="location-consent text-left" disabled={location.permission === "requesting"}>
+              <span aria-hidden="true">⌖</span>
+              <span><strong>{location.permission === "granted" ? "已启用环境启发" : "用当前位置获得环境启发"}</strong><small>{location.label || "只在你主动点击时获取，可随时跳过"}</small></span>
+            </button>
+            <div className="flex items-center justify-between gap-3 sm:justify-end">
+              <span className="text-xs text-muted">⌘/Ctrl + Enter</span>
+              <Button variant="primary" className="min-h-12 px-5" disabled={!seed.trim() || creating} onClick={onSubmit}>{creating ? "正在创建…" : "进入思维空间"}</Button>
+            </div>
+          </div>
+        </section>
+
+        <section className="mt-10" aria-label="项目列表">
           <div className="mb-4 flex items-center justify-end">
             <span className="text-xs text-muted">点击项目直接进入 3D 视图</span>
           </div>
@@ -191,22 +297,6 @@ export default function Home() {
         )}
         </section>
 
-        <section className="glass-inset mt-10 rounded-3xl p-6 md:p-8">
-          <label htmlFor="seed" className="block text-sm font-medium text-ink">新建项目</label>
-          <p className="mt-1 text-xs text-muted">先写下一个念头，创建后直接进入 3D 视图。</p>
-          <div className="relative mt-5">
-            {!seed && (
-              <span className="typewriter-hint pointer-events-none absolute left-5 top-5 z-10 max-w-[calc(100%-2.5rem)] text-sm leading-7 text-muted md:left-6" aria-hidden="true">
-                <span className="mr-2 opacity-70">例如</span>{animatedExample}<i />
-              </span>
-            )}
-            <textarea id="seed" value={seed} onChange={(e) => setSeed(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) onSubmit(); }} rows={4} className="inset-input min-h-32 w-full resize-none rounded-2xl px-5 py-5 text-sm leading-7 text-ink outline-none focus:ring-2 focus:ring-primary/50 md:px-6" />
-          </div>
-          <div className="mt-4 flex items-center justify-between">
-            <span className="text-xs text-muted">⌘/Ctrl + Enter</span>
-            <Button variant="primary" disabled={!seed.trim() || creating} onClick={onSubmit}>{creating ? "正在创建…" : "创建并进入 3D"}</Button>
-          </div>
-        </section>
       </div>
       {deleteTarget && (
         <Modal title="删除这个项目？" onClose={() => setDeleteTarget(null)}>

@@ -17,6 +17,7 @@ export default function IdeaSpace({ id }: { id: string }) {
   const selectedNodeId = useStore((s) => s.selectedNodeId);
   const selectedEdgeId = useStore((s) => s.selectedEdgeId);
   const aiStatus = useStore((s) => s.aiStatus);
+  const requestBusinessLens = useStore((s) => s.requestBusinessLens);
   const [addOpen, setAddOpen] = useState(false);
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
@@ -78,6 +79,21 @@ export default function IdeaSpace({ id }: { id: string }) {
   useEffect(() => {
     loadIdea(id);
   }, [id, loadIdea]);
+
+  useEffect(() => {
+    if (
+      idea?.thinkingMode === "business" &&
+      idea.nodes.length === 1 &&
+      idea.businessInsights.length === 0 &&
+      aiStatus === "idle"
+    ) {
+      const timer = window.setTimeout(() => {
+        setRightOpen(true);
+        void requestBusinessLens();
+      }, 320);
+      return () => window.clearTimeout(timer);
+    }
+  }, [aiStatus, idea, requestBusinessLens]);
 
   useEffect(() => () => {
     if (leftCloseTimer.current) clearTimeout(leftCloseTimer.current);
@@ -257,6 +273,9 @@ function TopBar() {
             {idea?.discoveryCount} 新发现
           </span>
         )}
+        <span className="hidden rounded-full border border-white/70 bg-white/45 px-2.5 py-1 text-muted sm:inline">
+          {idea?.thinkingMode === "business" ? "商业深思" : "日常发散"}
+        </span>
         <span
           className={
             saveStatus === "failed" ? "text-danger" : "text-muted"
@@ -345,7 +364,7 @@ function ToolButton({
 function RightWorkspace({ nodeKey, edgeKey, visible, onMouseEnter, onMouseLeave }: { nodeKey: string; edgeKey: string; visible: boolean; onMouseEnter: () => void; onMouseLeave: () => void }) {
   const [tab, setTab] = useState<"context" | "summary">("context");
   const hasContext = useStore(
-    (s) => Boolean(s.selectedNodeId || s.selectedEdgeId || s.aiStatus !== "idle"),
+    (s) => Boolean(s.idea || s.selectedNodeId || s.selectedEdgeId || s.aiStatus !== "idle"),
   );
   return (
     <aside onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} className={`workspace-panel workspace-panel-right absolute bottom-3 right-2 top-16 z-20 flex w-[min(90vw,360px)] flex-col overflow-hidden rounded-3xl lg:bottom-5 lg:right-4 lg:w-[340px] ${visible ? "is-visible" : "is-hidden"}`}>
@@ -364,6 +383,7 @@ function RightWorkspace({ nodeKey, edgeKey, visible, onMouseEnter, onMouseLeave 
           <div className="space-y-4">
             <NodePanel key={nodeKey} />
             <EdgePanel key={edgeKey} />
+            <BusinessInsightPanel />
             <SuggestionPanel />
           </div>
         ) : (
@@ -388,6 +408,8 @@ function NodePanel() {
   const focusedNodeId = useStore((s) => s.focusedNodeId);
   const requestSuggestions = useStore((s) => s.requestSuggestions);
   const aiStatus = useStore((s) => s.aiStatus);
+  const createBranch = useStore((s) => s.createBranch);
+  const addNodeThoughtRecord = useStore((s) => s.addNodeThoughtRecord);
 
   const node = useMemo(
     () => idea?.nodes.find((n) => n.id === selectedNodeId),
@@ -403,6 +425,19 @@ function NodePanel() {
 
   const [text, setText] = useState(() => node?.text ?? "");
   const [confirming, setConfirming] = useState(false);
+  const [branchOpen, setBranchOpen] = useState(false);
+  const [branchTitle, setBranchTitle] = useState("");
+  const [branchDirection, setBranchDirection] = useState("");
+  const [recordText, setRecordText] = useState("");
+
+  const records = useMemo(
+    () => idea?.nodeThoughtRecords.filter((record) => record.nodeId === selectedNodeId) ?? [],
+    [idea, selectedNodeId],
+  );
+  const branches = useMemo(
+    () => idea?.branches.filter((branch) => branch.rootNodeId === selectedNodeId) ?? [],
+    [idea, selectedNodeId],
+  );
 
   if (!node) return null;
 
@@ -471,7 +506,83 @@ function NodePanel() {
           </Button>
         )}
       </div>
+
+      <div className="mt-4 border-t border-line pt-4">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-ink">思考分支</span>
+          <button type="button" onClick={() => setBranchOpen((value) => !value)} className="min-h-11 rounded-lg px-2 text-xs text-primary-bright hover:bg-primary/5">
+            {branchOpen ? "收起" : "+ 创建分支"}
+          </button>
+        </div>
+        {branchOpen && (
+          <div className="mt-2 space-y-2 rounded-xl bg-bg/55 p-3">
+            <input value={branchTitle} onChange={(event) => setBranchTitle(event.target.value)} placeholder="分支标题，例如：社区夜间场景" className="min-h-11 w-full rounded-lg border border-line bg-surface/65 px-3 text-sm text-ink outline-none focus:border-primary" />
+            <input value={branchDirection} onChange={(event) => setBranchDirection(event.target.value)} placeholder="这条分支准备验证什么？（可选）" className="min-h-11 w-full rounded-lg border border-line bg-surface/65 px-3 text-sm text-ink outline-none focus:border-primary" />
+            <Button variant="primary" disabled={!branchTitle.trim()} onClick={() => {
+              if (createBranch(node.id, branchTitle, branchDirection)) {
+                setBranchTitle("");
+                setBranchDirection("");
+                setBranchOpen(false);
+              }
+            }}>创建并放入画布</Button>
+          </div>
+        )}
+        {branches.length > 0 && (
+          <div className="mt-2 space-y-1.5">
+            {branches.map((branch) => <div key={branch.id} className="rounded-lg bg-bg/45 px-3 py-2 text-xs"><span className="font-medium text-ink">{branch.title}</span>{branch.direction && <p className="mt-1 text-muted">{branch.direction}</p>}</div>)}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 border-t border-line pt-4">
+        <label htmlFor={`record-${node.id}`} className="text-xs font-medium text-ink">记录此刻的想法</label>
+        <textarea id={`record-${node.id}`} value={recordText} onChange={(event) => setRecordText(event.target.value)} rows={2} placeholder="记录判断、疑问或回来后产生的新发现" className="mt-2 w-full resize-none rounded-lg border border-line bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-primary" />
+        <div className="mt-2 flex justify-end"><Button disabled={!recordText.trim()} onClick={() => { addNodeThoughtRecord(node.id, recordText); setRecordText(""); }}>保存记录</Button></div>
+        {records.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {records.slice().reverse().map((record) => <p key={record.id} className="rounded-lg border border-line/70 bg-surface/45 px-3 py-2 text-xs leading-5 text-muted">{record.content}</p>)}
+          </div>
+        )}
+      </div>
     </section>
+  );
+}
+
+function BusinessInsightPanel() {
+  const idea = useStore((s) => s.idea);
+  const insights = idea?.businessInsights ?? [];
+  const direction = idea?.direction;
+  const environmentSuggestions = idea?.environmentSuggestions ?? [];
+  const environmentStatus = useStore((s) => s.environmentStatus);
+  const environmentMessage = useStore((s) => s.environmentMessage);
+  const requestEnvironmentSuggestions = useStore((s) => s.requestEnvironmentSuggestions);
+  if (!idea) return null;
+  return (
+    <>
+      {(insights.length > 0 || direction?.text) && (
+        <section className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-primary-bright">本轮透视</p>
+          {direction?.text && <p className="mt-2 text-xs leading-5 text-muted">方向：{direction.text}</p>}
+          {insights.map((insight) => (
+            <p key={insight.id} className="mt-2 text-sm leading-6 text-ink">{insight.content}</p>
+          ))}
+        </section>
+      )}
+      <section className="rounded-xl border border-line bg-bg/35 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div><p className="text-xs font-medium uppercase tracking-wide text-muted">环境启发</p><p className="mt-1 text-[11px] leading-4 text-muted">当知识不再是瓶颈，换一个现实环境刺激顿悟。</p></div>
+          <Button disabled={environmentStatus === "loading"} onClick={() => void requestEnvironmentSuggestions()}>{environmentStatus === "loading" ? "生成中…" : "换个环境"}</Button>
+        </div>
+        {environmentMessage && <p className="mt-2 text-[11px] text-muted">{environmentMessage}</p>}
+        {environmentSuggestions.length > 0 && <div className="mt-3 space-y-2">{environmentSuggestions.map((item) => (
+          <article key={item.id} className="rounded-lg border border-line/70 bg-surface/50 p-3">
+            <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium text-ink">{item.title}</p><span className="shrink-0 text-[10px] text-muted">{item.durationMinutes} 分钟</span></div>
+            <p className="mt-1.5 text-[11px] leading-5 text-muted">{item.instruction}</p>
+            {item.isGeneric && <p className="mt-1 text-[10px] text-primary-bright">通用建议 · 未使用真实地点</p>}
+          </article>
+        ))}</div>}
+      </section>
+    </>
   );
 }
 
@@ -672,6 +783,8 @@ function SuggestionPanel() {
         <span className="text-sm font-medium text-ink">
           {aiStatus === "blocked"
             ? "内容安全提醒"
+            : aiMode === "business_lens"
+            ? "商业透视候选"
             : aiMode === "relation_probe"
             ? "可能的联系"
             : aiMode === "node_brainstorm"
@@ -691,7 +804,7 @@ function SuggestionPanel() {
       {aiStatus === "loading" && (
         <div className="flex items-center gap-2 text-sm text-muted">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-line border-t-primary" />
-          {aiMode === "relation_probe" ? "正在寻找新节点的联系…" : "正在理解并展开…"}
+          {aiMode === "relation_probe" ? "正在寻找新节点的联系…" : aiMode === "business_lens" ? "正在拆解横向业态与纵向链路…" : "正在理解并展开…"}
         </div>
       )}
 
