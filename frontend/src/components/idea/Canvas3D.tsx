@@ -6,7 +6,16 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber"
 import { OrbitControls, Html, Line } from "@react-three/drei";
 import type { AISuggestion, ThoughtEdge, ThoughtNode } from "@/lib/types";
 import { useStore } from "@/lib/store";
-import { controlsRef, fixNode, positionsRef, startLayout, syncPositions } from "@/lib/graph";
+import {
+  controlsRef,
+  fixNode,
+  planarPositionsRef,
+  positionsRef,
+  startLayout,
+  startPlanarLayout,
+  syncPlanarPositions,
+  syncPositions,
+} from "@/lib/graph";
 import type { Vec3 } from "@/lib/types";
 import { Button, TextInput } from "@/components/ui";
 
@@ -20,6 +29,31 @@ const VIEW_MOVEMENT_CODES = new Set([
   "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
 ]);
 
+type LabelLOD = "full" | "compact" | "point";
+const displayPositionsRef: { current: Map<string, THREE.Vector3> } = { current: new Map() };
+const labelLODRef: { current: Map<string, LabelLOD> } = { current: new Map() };
+const candidateDisplayKey = (id: string) => `candidate:${id}`;
+
+// Three.js cameras are intentionally mutable scene objects. Keeping projection
+// mutations in small helpers prevents React state from being used for frame data.
+function configurePerspectiveCamera(camera: THREE.PerspectiveCamera, width: number, height: number) {
+  camera.aspect = Math.max(width / Math.max(height, 1), 0.01);
+  camera.updateProjectionMatrix();
+}
+
+function configureOrthographicCamera(camera: THREE.OrthographicCamera, width: number, height: number) {
+  camera.left = -width / 2;
+  camera.right = width / 2;
+  camera.top = height / 2;
+  camera.bottom = -height / 2;
+  camera.updateProjectionMatrix();
+}
+
+function setOrthographicZoom(camera: THREE.OrthographicCamera, zoom: number) {
+  camera.zoom = zoom;
+  camera.updateProjectionMatrix();
+}
+
 type QuickAddTarget = {
   world: Vec3;
   screen: { x: number; y: number; width: number; height: number };
@@ -30,18 +64,18 @@ export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; r
   const clearEdge = useStore((s) => s.selectEdge);
   const setConnectFrom = useStore((s) => s.setConnectFrom);
   const addNodeAt = useStore((s) => s.addNodeAt);
+  const viewMode = useStore((s) => s.viewMode);
   const [quickAddTarget, setQuickAddTarget] = useState<QuickAddTarget | null>(null);
 
   return (
     <div className={`canvas-viewport absolute inset-0 min-w-0 ${leftOpen ? "lg:left-40" : "lg:left-0"} ${rightOpen ? "lg:right-[356px]" : "lg:right-0"}`}>
       <Canvas
         gl={{ alpha: true, antialias: true }}
-        camera={{ position: [0, 0, 30], fov: 55, near: 0.1, far: 1000 }}
         onCreated={({ gl }) => {
           gl.domElement.setAttribute("role", "img");
           gl.domElement.setAttribute(
             "aria-label",
-            "交互式 3D 关键词网络。WASD 或方向键移动，Q、E 左右转向，拖动旋转，滚轮缩放，双击空白处添加关键词。",
+            "交互式关键词网络。支持 3D 空间与 2D 平面视图、键盘移动、缩放、节点拖动和双击添加关键词。",
           );
         }}
         onPointerMissed={() => {
@@ -50,22 +84,18 @@ export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; r
           setConnectFrom(null);
         }}
       >
+        <ViewCamera />
         <ambientLight intensity={1.8} />
         <directionalLight position={[10, 12, 10]} intensity={1.1} color="#ffffff" />
         <pointLight position={[-12, -8, -12]} intensity={0.45} color="#c9c2f6" />
         <BackgroundCreateLayer onCreate={setQuickAddTarget} />
         <Graph />
         <CameraController />
-        <OrbitControls
-          ref={(c) => {
-            controlsRef.current = c as unknown as (typeof controlsRef)["current"];
-          }}
-          enableDamping
-          dampingFactor={0.08}
-          minDistance={6}
-          maxDistance={140}
-        />
+        <AdaptiveControls />
       </Canvas>
+      <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full border border-white/70 bg-white/45 px-3 py-1.5 text-[11px] text-muted backdrop-blur-md">
+        {viewMode === "3d" ? "3D：拖动旋转 · 滚轮缩放 · WASD 游走" : "2D：拖动画布 · 滚轮缩放 · WASD 平移"}
+      </div>
       {quickAddTarget && (
         <QuickAddDialog
           target={quickAddTarget.screen}
@@ -77,6 +107,82 @@ export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; r
         />
       )}
     </div>
+  );
+}
+
+function ViewCamera() {
+  const viewMode = useStore((state) => state.viewMode);
+  const { set, size } = useThree();
+  const perspective = useMemo(() => {
+    const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 1000);
+    camera.position.set(0, 0, 30);
+    return camera;
+  }, []);
+  const orthographic = useMemo(() => {
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+    camera.position.set(0, 0, 50);
+    camera.zoom = 28;
+    return camera;
+  }, []);
+  const last3DPosition = useRef(new THREE.Vector3(0, 0, 30));
+  const lastTarget = useRef(new THREE.Vector3());
+
+  useEffect(() => {
+    configurePerspectiveCamera(perspective, size.width, size.height);
+    configureOrthographicCamera(orthographic, size.width, size.height);
+  }, [orthographic, perspective, size.height, size.width]);
+
+  useEffect(() => {
+    const target = controlsRef.current?.target
+      ? new THREE.Vector3().copy(controlsRef.current.target)
+      : lastTarget.current.clone();
+    lastTarget.current.copy(target);
+    if (viewMode === "2d") {
+      last3DPosition.current.copy(perspective.position);
+      orthographic.position.set(target.x, target.y, 50);
+      orthographic.lookAt(target.x, target.y, 0);
+      orthographic.updateProjectionMatrix();
+      set({ camera: orthographic });
+    } else {
+      perspective.position.copy(last3DPosition.current);
+      if (perspective.position.distanceTo(target) < 6) perspective.position.set(target.x, target.y, target.z + 30);
+      perspective.lookAt(target);
+      perspective.updateProjectionMatrix();
+      set({ camera: perspective });
+    }
+  }, [orthographic, perspective, set, viewMode]);
+
+  return null;
+}
+
+function AdaptiveControls() {
+  const viewMode = useStore((state) => state.viewMode);
+  const camera = useThree((state) => state.camera);
+  return (
+    <OrbitControls
+      key={`${viewMode}-${camera.uuid}`}
+      camera={camera}
+      ref={(control) => {
+        controlsRef.current = control as unknown as (typeof controlsRef)["current"];
+      }}
+      enableDamping
+      dampingFactor={0.08}
+      enableRotate={viewMode === "3d"}
+      screenSpacePanning={viewMode === "2d"}
+      minDistance={6}
+      maxDistance={140}
+      minZoom={6}
+      maxZoom={70}
+      mouseButtons={viewMode === "2d" ? {
+        LEFT: THREE.MOUSE.PAN,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.PAN,
+      } : undefined}
+      touches={viewMode === "2d" ? {
+        ONE: THREE.TOUCH.PAN,
+        TWO: THREE.TOUCH.DOLLY_PAN,
+      } : undefined}
+    />
   );
 }
 
@@ -196,6 +302,7 @@ function Graph() {
   const mode = useStore((s) => s.mode);
   const connectFromId = useStore((s) => s.connectFromId);
   const suggestions = useStore((s) => s.suggestions);
+  const viewMode = useStore((s) => s.viewMode);
 
   const nodeIds = nodes.map((n) => n.id).join(",");
   const edgeIds = edges.map((e) => e.id).join(",");
@@ -206,13 +313,18 @@ function Graph() {
     const relayout = layoutNonce !== prevNonce.current;
     prevNonce.current = layoutNonce;
     syncPositions(nodes);
+    if (viewMode === "2d") {
+      syncPlanarPositions(nodes);
+      return startPlanarLayout(nodes, edges, relayout, () => {
+        useStore.getState().requestGlobalView();
+      }).stop;
+    }
     return startLayout(nodes, edges, relayout, (positions) => {
       useStore.getState().commitPositions(positions);
-      // 布局稳定后自动取景，确保所有节点可见
       useStore.getState().requestGlobalView();
     }).stop;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodeIds, edgeIds, layoutNonce]);
+  }, [nodeIds, edgeIds, layoutNonce, viewMode]);
 
   const focusSet = useMemo(() => {
     const set = new Set<string>();
@@ -230,6 +342,7 @@ function Graph() {
 
   return (
     <group>
+      <SceneDetailManager nodes={nodes} suggestions={suggestions.filter((suggestion) => suggestion.type === "node")} />
       {edges.map((edge) => (
         <EdgeMesh
           key={edge.id}
@@ -266,6 +379,98 @@ function Graph() {
   );
 }
 
+function SceneDetailManager({ nodes, suggestions }: { nodes: ThoughtNode[]; suggestions: AISuggestion[] }) {
+  const viewMode = useStore((state) => state.viewMode);
+  const selectedNodeId = useStore((state) => state.selectedNodeId);
+  const focusedNodeId = useStore((state) => state.focusedNodeId);
+  const selectedSuggestionId = useStore((state) => state.selectedSuggestionId);
+  const blendRef = useRef(viewMode === "2d" ? 1 : 0);
+  const projected = useRef(new THREE.Vector3());
+
+  useFrame(({ camera, size }, delta) => {
+    const targetBlend = viewMode === "2d" ? 1 : 0;
+    const blendSpeed = 1 - Math.exp(-Math.min(delta, 0.05) * 8.5);
+    blendRef.current = THREE.MathUtils.lerp(blendRef.current, targetBlend, blendSpeed);
+
+    for (const node of nodes) {
+      const source3D = positionsRef.current.get(node.id) ?? new THREE.Vector3(node.position.x, node.position.y, node.position.z);
+      const source2D = planarPositionsRef.current.get(node.id) ?? new THREE.Vector3(source3D.x, source3D.y, 0);
+      let display = displayPositionsRef.current.get(node.id);
+      if (!display) {
+        display = source3D.clone();
+        displayPositionsRef.current.set(node.id, display);
+      }
+      const target = source3D.clone().lerp(source2D, blendRef.current);
+      display.lerp(target, blendSpeed);
+    }
+    for (const suggestion of suggestions) {
+      const position = suggestion.position ?? { x: 0, y: 0, z: 0 };
+      const key = candidateDisplayKey(suggestion.id);
+      let display = displayPositionsRef.current.get(key);
+      if (!display) {
+        display = new THREE.Vector3(position.x, position.y, position.z);
+        displayPositionsRef.current.set(key, display);
+      }
+      const target = new THREE.Vector3(position.x, position.y, position.z * (1 - blendRef.current));
+      display.lerp(target, blendSpeed);
+    }
+
+    const distance = camera.position.distanceTo(controlsRef.current?.target ?? new THREE.Vector3());
+    const zoom = camera instanceof THREE.OrthographicCamera ? camera.zoom : 0;
+    const sceneLOD: LabelLOD = camera instanceof THREE.OrthographicCamera
+      ? zoom >= 28 ? "full" : zoom >= 14 ? "compact" : "point"
+      : distance <= 23 ? "full" : distance <= 48 ? "compact" : "point";
+
+    const entries = [
+      ...nodes.map((node) => ({
+        id: node.id,
+        position: displayPositionsRef.current.get(node.id),
+        priority: node.id === selectedNodeId ? 1000
+          : node.id === focusedNodeId ? 950
+            : node.semanticRole === "root" ? 900
+              : node.branchId ? 760
+                : node.semanticRole === "horizontal" || node.semanticRole === "vertical" ? 520 : 420,
+      })),
+      ...suggestions.map((suggestion) => ({
+        id: candidateDisplayKey(suggestion.id),
+        position: displayPositionsRef.current.get(candidateDisplayKey(suggestion.id)),
+        priority: suggestion.id === selectedSuggestionId ? 980 : 220,
+      })),
+    ].filter((entry) => entry.position);
+
+    entries.sort((a, b) => b.priority - a.priority);
+    const occupied: { left: number; right: number; top: number; bottom: number }[] = [];
+    const nextLOD = new Map<string, LabelLOD>();
+    for (const entry of entries) {
+      const forceVisible = entry.priority >= 760;
+      if (sceneLOD === "point" && !forceVisible) {
+        nextLOD.set(entry.id, "point");
+        continue;
+      }
+      projected.current.copy(entry.position!).project(camera);
+      if (projected.current.z < -1 || projected.current.z > 1) {
+        nextLOD.set(entry.id, "point");
+        continue;
+      }
+      const x = (projected.current.x * 0.5 + 0.5) * size.width;
+      const y = (-projected.current.y * 0.5 + 0.5) * size.height;
+      const width = sceneLOD === "full" ? 170 : 112;
+      const height = sceneLOD === "full" ? 42 : 32;
+      const rect = { left: x - width / 2 - 8, right: x + width / 2 + 8, top: y - height / 2 - 6, bottom: y + height / 2 + 6 };
+      const collides = occupied.some((other) => !(rect.right < other.left || rect.left > other.right || rect.bottom < other.top || rect.top > other.bottom));
+      if (collides && !forceVisible) {
+        nextLOD.set(entry.id, "point");
+      } else {
+        nextLOD.set(entry.id, sceneLOD === "point" ? "compact" : sceneLOD);
+        occupied.push(rect);
+      }
+    }
+    labelLODRef.current = nextLOD;
+  });
+
+  return null;
+}
+
 function NodeMesh({
   node,
   dimmed,
@@ -280,6 +485,8 @@ function NodeMesh({
   connectMode: boolean;
 }) {
   const groupRef = useRef<THREE.Group>(null);
+  const labelRef = useRef<HTMLDivElement>(null);
+  const viewMode = useStore((state) => state.viewMode);
   const [hovered, setHovered] = useState(false);
   const draggingRef = useRef(false);
   const movedRef = useRef(false);
@@ -287,8 +494,13 @@ function NodeMesh({
   const { camera, gl, raycaster } = useThree();
 
   useFrame(() => {
-    const pos = positionsRef.current.get(node.id);
+    const pos = displayPositionsRef.current.get(node.id) ?? positionsRef.current.get(node.id);
     if (pos && groupRef.current) groupRef.current.position.copy(pos);
+    const lod = labelLODRef.current.get(node.id) ?? "full";
+    if (labelRef.current && labelRef.current.dataset.lod !== lod) {
+      labelRef.current.dataset.lod = lod;
+      labelRef.current.tabIndex = lod === "point" ? -1 : 0;
+    }
   });
 
   const handleClick = () => {
@@ -330,7 +542,7 @@ function NodeMesh({
         return;
       }
       if (Math.abs(dx) + Math.abs(dy) > 3) movedRef.current = true;
-      const pos = positionsRef.current.get(node.id);
+      const pos = displayPositionsRef.current.get(node.id) ?? positionsRef.current.get(node.id);
       if (!pos) return;
       const camDir = camera.getWorldDirection(new THREE.Vector3());
       const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(camDir, pos);
@@ -342,9 +554,17 @@ function NodeMesh({
       raycaster.setFromCamera(ndc, camera);
       const point = new THREE.Vector3();
       if (raycaster.ray.intersectPlane(plane, point)) {
-        const v = positionsRef.current.get(node.id);
-        if (v) v.copy(point);
-        fixNode(node.id, point.x, point.y, point.z);
+        if (viewMode === "2d") {
+          const planar = planarPositionsRef.current.get(node.id);
+          if (planar) planar.set(point.x, point.y, 0);
+          const spatial = positionsRef.current.get(node.id);
+          if (spatial) spatial.set(point.x, point.y, spatial.z);
+          fixNode(node.id, point.x, point.y, 0);
+        } else {
+          const spatial = positionsRef.current.get(node.id);
+          if (spatial) spatial.copy(point);
+          fixNode(node.id, point.x, point.y, point.z);
+        }
       }
     };
     const onUp = () => {
@@ -381,8 +601,8 @@ function NodeMesh({
         onClick={handleClick}
         onDoubleClick={(event) => event.stopPropagation()}
         onPointerDown={onPointerDown}
-        onPointerOver={() => setHovered(true)}
-        onPointerOut={() => setHovered(false)}
+        onPointerOver={() => { setHovered(true); document.body.style.cursor = "grab"; }}
+        onPointerOut={() => { setHovered(false); document.body.style.cursor = "default"; }}
       >
         <sphereGeometry args={[0.78, 24, 24]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
@@ -400,6 +620,8 @@ function NodeMesh({
       </mesh>
       <Html position={[0, 0, 0]} center zIndexRange={[10, 0]}>
         <div
+          ref={labelRef}
+          data-lod="full"
           className={`node-label formal-node-label specular-node ${selected ? "is-selected" : ""} ${isConnectSource ? "is-source" : ""}`}
           data-testid="formal-node"
           role="button"
@@ -438,8 +660,8 @@ function EdgeMesh({
   const tmpDir = useRef(new THREE.Vector3());
 
   useFrame(() => {
-    const a = positionsRef.current.get(edge.sourceNodeId);
-    const b = positionsRef.current.get(edge.targetNodeId);
+    const a = displayPositionsRef.current.get(edge.sourceNodeId) ?? positionsRef.current.get(edge.sourceNodeId);
+    const b = displayPositionsRef.current.get(edge.targetNodeId) ?? positionsRef.current.get(edge.targetNodeId);
     const g = groupRef.current;
     if (!a || !b || !g) return;
     tmpA.current.copy(a);
@@ -479,10 +701,22 @@ function EdgeMesh({
 
 function CandidateNode({ suggestion }: { suggestion: AISuggestion }) {
   const pos = suggestion.position ?? { x: 0, y: 0, z: 0 };
+  const groupRef = useRef<THREE.Group>(null);
+  const labelRef = useRef<HTMLDivElement>(null);
   const selected = useStore((s) => s.selectedSuggestionId === suggestion.id);
   const selectSuggestion = useStore((s) => s.selectSuggestion);
+  useFrame(() => {
+    const key = candidateDisplayKey(suggestion.id);
+    const position = displayPositionsRef.current.get(key);
+    if (position && groupRef.current) groupRef.current.position.copy(position);
+    const lod = labelLODRef.current.get(key) ?? "full";
+    if (labelRef.current && labelRef.current.dataset.lod !== lod) {
+      labelRef.current.dataset.lod = lod;
+      labelRef.current.tabIndex = lod === "point" ? -1 : 0;
+    }
+  });
   return (
-    <group position={[pos.x, pos.y, pos.z]}>
+    <group ref={groupRef} position={[pos.x, pos.y, pos.z]}>
       <mesh
         onClick={(event) => {
           event.stopPropagation();
@@ -511,6 +745,8 @@ function CandidateNode({ suggestion }: { suggestion: AISuggestion }) {
       </mesh>
       <Html position={[0, 0, 0]} center zIndexRange={[10, 0]}>
         <div
+          ref={labelRef}
+          data-lod="full"
           className={`node-label candidate-node-label specular-node is-candidate ${selected ? "is-selected" : ""}`}
           data-testid="candidate-node"
           role="button"
@@ -538,8 +774,8 @@ function CandidateEdge({ suggestion }: { suggestion: AISuggestion }) {
 
   useFrame(() => {
     if (!suggestion.sourceNodeId || !suggestion.targetNodeId) return;
-    const a = positionsRef.current.get(suggestion.sourceNodeId);
-    const b = positionsRef.current.get(suggestion.targetNodeId);
+    const a = displayPositionsRef.current.get(suggestion.sourceNodeId) ?? positionsRef.current.get(suggestion.sourceNodeId);
+    const b = displayPositionsRef.current.get(suggestion.targetNodeId) ?? positionsRef.current.get(suggestion.targetNodeId);
     const g = groupRef.current;
     if (!a || !b || !g) return;
     tmpA.current.copy(a);
@@ -574,7 +810,8 @@ function CandidateEdge({ suggestion }: { suggestion: AISuggestion }) {
 
 function CameraController() {
   const cameraCmd = useStore((s) => s.cameraCmd);
-  const { camera } = useThree();
+  const viewMode = useStore((s) => s.viewMode);
+  const { camera, size } = useThree();
   const pressedKeysRef = useRef(new Set<string>());
   const moveRef = useRef(new THREE.Vector3());
   const forwardRef = useRef(new THREE.Vector3());
@@ -624,7 +861,9 @@ function CameraController() {
     const forward = camera.getWorldDirection(forwardRef.current).normalize();
     const up = upRef.current.copy(camera.up).normalize();
     const accelerated = keys.has("ShiftLeft") || keys.has("ShiftRight");
-    const turnDirection = (keys.has("KeyQ") ? 1 : 0) - (keys.has("KeyE") ? 1 : 0);
+    const turnDirection = viewMode === "3d"
+      ? (keys.has("KeyQ") ? 1 : 0) - (keys.has("KeyE") ? 1 : 0)
+      : 0;
 
     if (turnDirection !== 0) {
       transitionRef.current = null;
@@ -635,14 +874,22 @@ function CameraController() {
     }
 
     const right = rightRef.current.crossVectors(forward, up).normalize();
-    if (keys.has("KeyW") || keys.has("ArrowUp")) move.add(forward);
-    if (keys.has("KeyS") || keys.has("ArrowDown")) move.sub(forward);
-    if (keys.has("KeyD") || keys.has("ArrowRight")) move.add(right);
-    if (keys.has("KeyA") || keys.has("ArrowLeft")) move.sub(right);
+    if (viewMode === "2d") {
+      if (keys.has("KeyW") || keys.has("ArrowUp")) move.y += 1;
+      if (keys.has("KeyS") || keys.has("ArrowDown")) move.y -= 1;
+      if (keys.has("KeyD") || keys.has("ArrowRight")) move.x += 1;
+      if (keys.has("KeyA") || keys.has("ArrowLeft")) move.x -= 1;
+    } else {
+      if (keys.has("KeyW") || keys.has("ArrowUp")) move.add(forward);
+      if (keys.has("KeyS") || keys.has("ArrowDown")) move.sub(forward);
+      if (keys.has("KeyD") || keys.has("ArrowRight")) move.add(right);
+      if (keys.has("KeyA") || keys.has("ArrowLeft")) move.sub(right);
+    }
 
     if (move.lengthSq() > 0) {
       transitionRef.current = null;
-      move.normalize().multiplyScalar((accelerated ? 32 : 15) * Math.min(delta, 0.05));
+      const speed = viewMode === "2d" ? (accelerated ? 42 : 22) : (accelerated ? 32 : 15);
+      move.normalize().multiplyScalar(speed * Math.min(delta, 0.05));
       camera.position.add(move);
       controls.target.add(move);
     }
@@ -677,22 +924,33 @@ function CameraController() {
     } else {
       const box = new THREE.Box3();
       for (const n of nodes) {
-        box.expandByPoint(
-          new THREE.Vector3(n.position.x, n.position.y, n.position.z),
-        );
+        box.expandByPoint(displayPositionsRef.current.get(n.id) ?? new THREE.Vector3(n.position.x, n.position.y, n.position.z));
       }
-      const sphere = box.getBoundingSphere(new THREE.Sphere());
-      toTarget.copy(sphere.center);
-      const radius = Math.max(sphere.radius, 3);
-      const perspectiveCamera = camera as THREE.PerspectiveCamera;
-      const verticalFov = (perspectiveCamera.fov * Math.PI) / 180;
-      const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * perspectiveCamera.aspect);
-      const fitFov = Math.min(verticalFov, horizontalFov);
-      const dist = (radius / Math.sin(fitFov / 2)) * 1.55;
-      const dir = camera.position.clone().sub(toTarget);
-      if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
-      dir.normalize();
-      camera.position.copy(toTarget).addScaledVector(dir, dist);
+      if (camera instanceof THREE.OrthographicCamera) {
+        const extent = box.getSize(new THREE.Vector3());
+        box.getCenter(toTarget);
+        toTarget.z = 0;
+        const paddedWidth = Math.max(extent.x + 10, 16);
+        const paddedHeight = Math.max(extent.y + 8, 12);
+        setOrthographicZoom(camera, THREE.MathUtils.clamp(
+          Math.min(size.width / paddedWidth, size.height / paddedHeight),
+          6,
+          55,
+        ));
+        camera.position.set(toTarget.x, toTarget.y, 50);
+      } else {
+        const sphere = box.getBoundingSphere(new THREE.Sphere());
+        toTarget.copy(sphere.center);
+        const radius = Math.max(sphere.radius + 2.4, 4.5);
+        const verticalFov = (camera.fov * Math.PI) / 180;
+        const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
+        const fitFov = Math.min(verticalFov, horizontalFov);
+        const dist = (radius / Math.sin(fitFov / 2)) * 1.7;
+        const dir = camera.position.clone().sub(toTarget);
+        if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
+        dir.normalize();
+        camera.position.copy(toTarget).addScaledVector(dir, dist);
+      }
     }
     controls.target.copy(toTarget);
     camera.lookAt(toTarget);
@@ -711,7 +969,7 @@ function CameraController() {
       fitGlobal();
     } else {
       const controls = controlsRef.current;
-      const livePosition = positionsRef.current.get(cameraCmd.nodeId);
+      const livePosition = displayPositionsRef.current.get(cameraCmd.nodeId) ?? positionsRef.current.get(cameraCmd.nodeId);
       const storedNode = useStore
         .getState()
         .idea?.nodes.find((node) => node.id === cameraCmd.nodeId);
@@ -726,6 +984,7 @@ function CameraController() {
             storedNode!.position.y,
             storedNode!.position.z,
           );
+      if (camera instanceof THREE.OrthographicCamera) toTarget.z = 0;
       const cameraOffset = camera.position.clone().sub(controls.target);
       if (cameraOffset.lengthSq() < 1e-6) cameraOffset.set(0, 0, 14);
       const toCamera = toTarget.clone().add(cameraOffset);

@@ -9,7 +9,8 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "e2e": "node scripts/e2e-full.cjs",
-    "e2e:ai": "node scripts/e2e-ai.cjs"
+    "e2e:ai": "node scripts/e2e-ai.cjs",
+    "e2e:view-modes": "node scripts/e2e-view-modes.cjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",
