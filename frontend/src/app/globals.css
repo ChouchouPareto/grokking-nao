@@ -652,6 +652,24 @@ canvas {
 .location-consent strong { color: var(--ink); font-size: 12px; font-weight: 600; }
 .location-consent small { margin-top: 2px; max-width: 340px; font-size: 10px; line-height: 1.4; }
 
+.keyword-preview-chip {
+  display: inline-flex;
+  min-height: 28px;
+  max-width: 150px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid rgb(116 104 216 / 0.2);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: rgb(255 255 255 / 0.52);
+  color: var(--primary-bright);
+  font-size: 11px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85);
+}
+
 .typewriter-hint i {
   display: inline-block;
   width: 1px;

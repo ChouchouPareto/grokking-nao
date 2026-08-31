@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import type { DirectionCandidate, Idea, LocationContext, ThinkingMode } from "@/lib/types";
 import { deleteIdea, duplicateIdea, listIdeas } from "@/lib/db";
@@ -9,6 +9,7 @@ import { formatTime } from "@/lib/utils";
 import { Button, Modal } from "@/components/ui";
 import { fetchDirectionSuggestions } from "@/lib/ai";
 import { LocationRequestError, requestCurrentLocation } from "@/lib/location";
+import { splitKeywords } from "@/lib/utils";
 
 type AtmosphereStyle = CSSProperties & {
   "--ambient-a": string;
@@ -85,6 +86,7 @@ export default function Home() {
   const [deleteTarget, setDeleteTarget] = useState<Idea | null>(null);
   const animatedExample = useTypewriterExamples(seed.length === 0);
   const createIdea = useStore((s) => s.createIdea);
+  const keywordPreview = useMemo(() => splitKeywords(seed), [seed]);
 
   useEffect(() => {
     listIdeas().then(setIdeas);
@@ -186,6 +188,17 @@ export default function Home() {
               </span>
             )}
             <textarea id="seed" aria-label="思考主题" value={seed} onChange={(e) => { setSeed(e.target.value); setDirectionCandidates([]); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) onSubmit(); }} rows={3} className="inset-input min-h-28 w-full resize-none rounded-2xl px-5 py-5 text-base leading-7 text-ink outline-none focus:ring-2 focus:ring-primary/50 md:px-6" />
+          </div>
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <p className="text-[11px] leading-5 text-muted">多个关键词可用换行、逗号、顿号或分号隔开，进入画布后会自动拆成独立节点。</p>
+            {keywordPreview.length > 1 && (
+              <div className="flex max-w-full flex-wrap justify-start gap-1.5 sm:max-w-[58%] sm:justify-end" aria-live="polite" aria-label={`将创建 ${keywordPreview.length} 个节点`}>
+                {keywordPreview.slice(0, 8).map((keyword) => (
+                  <span key={keyword} className="keyword-preview-chip">{keyword}</span>
+                ))}
+                {keywordPreview.length > 8 && <span className="keyword-preview-chip">+{keywordPreview.length - 8}</span>}
+              </div>
+            )}
           </div>
 
           <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto]">

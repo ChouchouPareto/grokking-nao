@@ -11,7 +11,7 @@ import type {
 } from "./types";
 import { SCHEMA_VERSION } from "./types";
 import { getIdea, putIdea } from "./db";
-import { generateTitle, randomPos, uid } from "./utils";
+import { generateTitle, randomPos, splitKeywords, uid } from "./utils";
 import { syncPositions } from "./graph";
 import {
   AIRequestError,
@@ -219,17 +219,26 @@ export const useStore = create<IdeaStore>()((set, get) => {
 
     async createIdea(seed, options = {}) {
       const ts = now();
-      const rootNode: ThoughtNode = {
-        id: uid(),
-        text: seed.trim(),
-        source: "user",
-        status: "formal",
-        position: { x: 0, y: 0, z: 0 },
-        isPositionPinned: true,
-        semanticRole: "root",
-        createdAt: ts,
-        updatedAt: ts,
-      };
+      const keywords = splitKeywords(seed);
+      const initialNodes: ThoughtNode[] = (keywords.length > 0 ? keywords : [seed.trim()]).map((text, index) => {
+        const ringIndex = Math.max(0, index - 1);
+        const ring = Math.floor(ringIndex / 6);
+        const angle = (ringIndex % 6) * (Math.PI * 2 / 6) - Math.PI / 2;
+        const radius = 6 + ring * 4;
+        return {
+          id: uid(),
+          text,
+          source: "user" as const,
+          status: "formal" as const,
+          position: index === 0
+            ? { x: 0, y: 0, z: 0 }
+            : { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius, z: ((index % 3) - 1) * 1.2 },
+          isPositionPinned: index === 0,
+          semanticRole: index === 0 ? "root" as const : "free" as const,
+          createdAt: ts,
+          updatedAt: ts,
+        };
+      });
       const idea: Idea = {
         id: uid(),
         schemaVersion: SCHEMA_VERSION,
@@ -238,7 +247,7 @@ export const useStore = create<IdeaStore>()((set, get) => {
         createdAt: ts,
         updatedAt: ts,
         lastOpenedAt: ts,
-        nodes: [rootNode],
+        nodes: initialNodes,
         edges: [],
         discoveryCount: 0,
         rejectedSummary: [],
