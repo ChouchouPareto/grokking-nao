@@ -83,7 +83,7 @@ export default function IdeaSpace({ id }: { id: string }) {
   useEffect(() => {
     if (
       idea?.thinkingMode === "business" &&
-      idea.nodes.length === 1 &&
+      !idea.nodes.some((node) => node.semanticRole === "horizontal" || node.semanticRole === "vertical") &&
       idea.businessInsights.length === 0 &&
       aiStatus === "idle"
     ) {
