@@ -216,6 +216,8 @@ function TopBar() {
   const idea = useStore((s) => s.idea);
   const saveStatus = useStore((s) => s.saveStatus);
   const updateTitle = useStore((s) => s.updateTitle);
+  const viewMode = useStore((s) => s.viewMode);
+  const setViewMode = useStore((s) => s.setViewMode);
   const [title, setTitle] = useState(() => idea?.title ?? "");
   const [editing, setEditing] = useState(false);
 
@@ -267,6 +269,26 @@ function TopBar() {
           </button>
         )}
       </div>
+      <div className="canvas-view-switch pointer-events-auto" role="group" aria-label="画布视图">
+        <button
+          type="button"
+          aria-pressed={viewMode === "3d"}
+          className={viewMode === "3d" ? "is-active" : ""}
+          onClick={() => setViewMode("3d")}
+        >
+          <span className="view-switch-icon" aria-hidden="true">◇</span>
+          3D 空间
+        </button>
+        <button
+          type="button"
+          aria-pressed={viewMode === "2d"}
+          className={viewMode === "2d" ? "is-active" : ""}
+          onClick={() => setViewMode("2d")}
+        >
+          <span className="view-switch-icon" aria-hidden="true">□</span>
+          2D 平面
+        </button>
+      </div>
       <div className="pointer-events-auto flex items-center gap-3 text-xs">
         {(idea?.discoveryCount ?? 0) > 0 && (
           <span className="rounded-full bg-discovery/15 px-2.5 py-1 font-medium text-discovery">
@@ -297,6 +319,7 @@ function LeftToolbar({ onAdd, visible, onMouseEnter, onMouseLeave }: { onAdd: ()
   const aiStatus = useStore((s) => s.aiStatus);
   const focusedNodeId = useStore((s) => s.focusedNodeId);
   const connectFromId = useStore((s) => s.connectFromId);
+  const viewMode = useStore((s) => s.viewMode);
 
   return (
     <aside onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} className={`workspace-panel workspace-panel-left absolute bottom-3 left-2 top-16 z-20 flex w-[min(86vw,320px)] flex-col justify-between rounded-3xl p-2 lg:bottom-5 lg:left-4 lg:w-36 ${visible ? "is-visible" : "is-hidden"}`}>
@@ -318,7 +341,14 @@ function LeftToolbar({ onAdd, visible, onMouseEnter, onMouseLeave }: { onAdd: ()
           />
         </div>
       </div>
-      <p className="rounded-xl bg-bg/60 px-2 py-2 text-[11px] leading-4 text-muted">WASD / 方向键 游走<br />Q / E 左右转向 · Shift 加速<br />Delete 删除 · Esc 返回</p>
+      <p className="rounded-xl bg-bg/60 px-2 py-2 text-[11px] leading-4 text-muted">
+        {viewMode === "3d" ? (
+          <>WASD / 方向键 游走<br />Q / E 左右转向 · Shift 加速</>
+        ) : (
+          <>WASD / 方向键 平移<br />拖动平移 · 滚轮缩放</>
+        )}
+        <br />Delete 删除 · Esc 返回
+      </p>
       {(mode === "connect" || focusedNodeId) && (
         <div className="absolute bottom-0 left-40 w-56 rounded-lg border border-line bg-surface/95 px-3 py-2 text-xs text-muted shadow-xl">
           {mode === "connect"

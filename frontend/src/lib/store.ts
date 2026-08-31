@@ -24,6 +24,7 @@ import {
 } from "./ai";
 
 export type SpaceMode = "browse" | "connect";
+export type ViewMode = "3d" | "2d";
 export type SaveStatus = "idle" | "saving" | "saved" | "failed";
 export type AIStatus = "idle" | "loading" | "success" | "error" | "blocked";
 export type CameraCommand =
@@ -35,6 +36,7 @@ interface IdeaStore {
   loading: boolean;
   notFound: boolean;
   mode: SpaceMode;
+  viewMode: ViewMode;
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
   focusedNodeId: string | null;
@@ -84,6 +86,7 @@ interface IdeaStore {
   saveSummary: () => void;
 
   setMode: (m: SpaceMode) => void;
+  setViewMode: (mode: ViewMode) => void;
   setConnectFrom: (id: string | null) => void;
   selectNode: (id: string | null) => void;
   selectEdge: (id: string | null) => void;
@@ -169,6 +172,7 @@ export const useStore = create<IdeaStore>()((set, get) => {
     loading: false,
     notFound: false,
     mode: "browse",
+    viewMode: "3d",
     selectedNodeId: null,
     selectedEdgeId: null,
     focusedNodeId: null,
@@ -203,6 +207,7 @@ export const useStore = create<IdeaStore>()((set, get) => {
         idea,
         loading: false,
         mode: "browse",
+        viewMode: "3d",
         selectedNodeId: null,
         selectedEdgeId: null,
         focusedNodeId: null,
@@ -492,6 +497,11 @@ export const useStore = create<IdeaStore>()((set, get) => {
 
     setMode(m) {
       set({ mode: m, connectFromId: null });
+    },
+
+    setViewMode(viewMode) {
+      set({ viewMode, connectFromId: null, mode: "browse" });
+      window.setTimeout(() => get().requestGlobalView(), 40);
     },
 
     setConnectFrom(id) {
