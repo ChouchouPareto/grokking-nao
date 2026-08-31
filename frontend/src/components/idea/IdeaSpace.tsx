@@ -23,8 +23,11 @@ export default function IdeaSpace({ id }: { id: string }) {
   const [rightOpen, setRightOpen] = useState(false);
   const [leftPinned, setLeftPinned] = useState(false);
   const [rightPinned, setRightPinned] = useState(false);
+  const [rightTab, setRightTab] = useState<"context" | "summary">("context");
+  const [dockOpen, setDockOpen] = useState(false);
   const leftCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rightCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dockCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const revealLeft = () => {
     if (leftCloseTimer.current) clearTimeout(leftCloseTimer.current);
@@ -45,28 +48,32 @@ export default function IdeaSpace({ id }: { id: string }) {
     rightCloseTimer.current = setTimeout(() => setRightOpen(false), 280);
   };
 
-  const toggleLeftPinned = () => {
-    if (leftOpen) {
-      setLeftPinned(false);
-      setLeftOpen(false);
-      return;
-    }
-    setRightPinned(false);
-    setRightOpen(false);
-    setLeftPinned(true);
-    revealLeft();
-  };
-
-  const toggleRightPinned = () => {
-    if (rightOpen) {
+  const selectDockTarget = (target: "tools" | "context" | "summary") => {
+    setDockOpen(false);
+    if (target === "tools") {
+      if (leftOpen) return closeMobilePanel();
       setRightPinned(false);
       setRightOpen(false);
+      setLeftPinned(true);
+      revealLeft();
       return;
     }
+    if (rightOpen && rightTab === target) return closeMobilePanel();
     setLeftPinned(false);
     setLeftOpen(false);
+    setRightTab(target);
     setRightPinned(true);
     revealRight();
+  };
+
+  const revealDock = () => {
+    if (dockCloseTimer.current) clearTimeout(dockCloseTimer.current);
+    setDockOpen(true);
+  };
+
+  const scheduleDockClose = () => {
+    if (dockCloseTimer.current) clearTimeout(dockCloseTimer.current);
+    dockCloseTimer.current = setTimeout(() => setDockOpen(false), 240);
   };
 
   const closeMobilePanel = () => {
@@ -98,6 +105,7 @@ export default function IdeaSpace({ id }: { id: string }) {
   useEffect(() => () => {
     if (leftCloseTimer.current) clearTimeout(leftCloseTimer.current);
     if (rightCloseTimer.current) clearTimeout(rightCloseTimer.current);
+    if (dockCloseTimer.current) clearTimeout(dockCloseTimer.current);
   }, []);
 
   useEffect(() => {
@@ -175,21 +183,41 @@ export default function IdeaSpace({ id }: { id: string }) {
       <LeftToolbar visible={leftOpen} onMouseEnter={revealLeft} onMouseLeave={scheduleLeftClose} onAdd={() => setAddOpen(true)} />
       <RightWorkspace
         visible={rightVisible}
+        tab={rightTab}
+        onTabChange={setRightTab}
         onMouseEnter={revealRight}
         onMouseLeave={scheduleRightClose}
         nodeKey={selectedNodeId ? `node-${selectedNodeId}` : "node-none"}
         edgeKey={selectedEdgeId ? `edge-${selectedEdgeId}` : "edge-none"}
       />
-      <button type="button" aria-label={leftOpen ? "关闭画布工具" : "显示画布工具"} aria-pressed={leftOpen} onClick={toggleLeftPinned} className={`panel-toggle left-panel-toggle ${leftOpen ? "panel-open" : ""} ${leftOpen || rightVisible ? "mobile-panel-suppressed" : ""}`}>
-        <svg className="panel-toggle-icon-desktop" aria-hidden="true" viewBox="0 0 20 20"><path d={leftOpen ? "M12 5 7 10l5 5" : "m8 5 5 5-5 5"} /></svg>
-        <svg className="panel-toggle-icon-mobile" aria-hidden="true" viewBox="0 0 20 20"><path d="m5 12 5-5 5 5" /></svg>
-        <span className="panel-toggle-label">工具</span>
-      </button>
-      <button type="button" aria-label={rightVisible ? "关闭何与论" : "显示何与论"} aria-pressed={rightVisible} onClick={toggleRightPinned} className={`panel-toggle right-panel-toggle ${rightVisible ? "panel-open" : ""} ${leftOpen || rightVisible ? "mobile-panel-suppressed" : ""}`}>
-        <svg className="panel-toggle-icon-desktop" aria-hidden="true" viewBox="0 0 20 20"><path d={rightVisible ? "m8 5 5 5-5 5" : "M12 5 7 10l5 5"} /></svg>
-        <svg className="panel-toggle-icon-mobile" aria-hidden="true" viewBox="0 0 20 20"><path d="m5 12 5-5 5 5" /></svg>
-        <span className="panel-toggle-label">何 · 论</span>
-      </button>
+      <nav
+        className={`workspace-dock ${dockOpen ? "is-open" : ""} ${rightVisible ? "has-right-panel" : ""}`}
+        aria-label="思考空间面板"
+        onPointerEnter={(event) => { if (event.pointerType === "mouse") revealDock(); }}
+        onPointerLeave={(event) => { if (event.pointerType === "mouse") scheduleDockClose(); }}
+      >
+        <div className="workspace-dock-options" aria-hidden={!dockOpen}>
+          <button type="button" tabIndex={dockOpen ? 0 : -1} className={leftOpen ? "is-active" : ""} onClick={() => selectDockTarget("tools")}>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6" /></svg><span>工具</span>
+          </button>
+          <button type="button" tabIndex={dockOpen ? 0 : -1} className={rightVisible && rightTab === "context" ? "is-active" : ""} onClick={() => selectDockTarget("context")}>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /></svg><span>何</span>
+          </button>
+          <button type="button" tabIndex={dockOpen ? 0 : -1} className={rightVisible && rightTab === "summary" ? "is-active" : ""} onClick={() => selectDockTarget("summary")}>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5h14v14H5zM8 9h8M8 13h6" /></svg><span>论</span>
+          </button>
+        </div>
+        <button
+          type="button"
+          className="workspace-dock-trigger"
+          aria-label={dockOpen ? "收起面板选择" : "展开面板选择"}
+          aria-expanded={dockOpen}
+          onClick={() => setDockOpen((open) => !open)}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="7" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="17" cy="12" r="1.5" /></svg>
+          <span>面板</span>
+        </button>
+      </nav>
       {(leftOpen || rightVisible) && <button type="button" className="mobile-panel-close" aria-label="关闭侧栏" onClick={closeMobilePanel}>✕</button>}
       {addOpen && <AddNodesDialog onClose={() => setAddOpen(false)} />}
     </div>
@@ -391,18 +419,17 @@ function ToolButton({
   );
 }
 
-function RightWorkspace({ nodeKey, edgeKey, visible, onMouseEnter, onMouseLeave }: { nodeKey: string; edgeKey: string; visible: boolean; onMouseEnter: () => void; onMouseLeave: () => void }) {
-  const [tab, setTab] = useState<"context" | "summary">("context");
+function RightWorkspace({ nodeKey, edgeKey, visible, tab, onTabChange, onMouseEnter, onMouseLeave }: { nodeKey: string; edgeKey: string; visible: boolean; tab: "context" | "summary"; onTabChange: (tab: "context" | "summary") => void; onMouseEnter: () => void; onMouseLeave: () => void }) {
   const hasContext = useStore(
     (s) => Boolean(s.idea || s.selectedNodeId || s.selectedEdgeId || s.aiStatus !== "idle"),
   );
   return (
     <aside onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} className={`workspace-panel workspace-panel-right absolute bottom-3 right-2 top-16 z-20 flex w-[min(90vw,360px)] flex-col overflow-hidden rounded-3xl lg:bottom-5 lg:right-4 lg:w-[340px] ${visible ? "is-visible" : "is-hidden"}`}>
       <div className="grid grid-cols-2 border-b border-line p-1.5">
-        <button type="button" onClick={() => setTab("context")} className={`workspace-tab min-h-12 rounded-xl focus-visible:ring-2 focus-visible:ring-primary ${tab === "context" ? "bg-surface-2 text-ink" : "text-muted"}`}>
+        <button type="button" onClick={() => onTabChange("context")} className={`workspace-tab min-h-12 rounded-xl focus-visible:ring-2 focus-visible:ring-primary ${tab === "context" ? "bg-surface-2 text-ink" : "text-muted"}`}>
           <span className="text-lg font-medium">何</span><span className="ml-2 text-[10px] uppercase tracking-[0.16em] opacity-60">Context</span>
         </button>
-        <button type="button" onClick={() => setTab("summary")} className={`workspace-tab min-h-12 rounded-xl focus-visible:ring-2 focus-visible:ring-primary ${tab === "summary" ? "bg-surface-2 text-ink" : "text-muted"}`}>
+        <button type="button" onClick={() => onTabChange("summary")} className={`workspace-tab min-h-12 rounded-xl focus-visible:ring-2 focus-visible:ring-primary ${tab === "summary" ? "bg-surface-2 text-ink" : "text-muted"}`}>
           <span className="text-lg font-medium">论</span><span className="ml-2 text-[10px] uppercase tracking-[0.16em] opacity-60">Synthesis</span>
         </button>
       </div>

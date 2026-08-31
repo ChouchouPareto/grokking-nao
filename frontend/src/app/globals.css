@@ -231,6 +231,103 @@ body {
 .right-panel-toggle { right: 0; border-radius: 18px 0 0 18px; }
 .right-panel-toggle.panel-open { right: min(90vw, 360px); }
 
+.workspace-dock {
+  position: absolute;
+  z-index: 35;
+  right: 12px;
+  top: 50%;
+  width: 92px;
+  transform: translateY(-50%);
+  transition: right 380ms cubic-bezier(.22,.8,.28,1);
+}
+
+.workspace-dock.has-right-panel { right: 372px; }
+
+.workspace-dock-trigger,
+.workspace-dock-options {
+  border: 1px solid rgb(255 255 255 / 0.86);
+  background: linear-gradient(145deg, rgb(255 255 255 / 0.88), rgb(241 243 250 / 0.72));
+  box-shadow: inset 1px 1px 2px rgb(255 255 255 / 0.96), 0 12px 32px rgb(75 83 108 / 0.14);
+  backdrop-filter: blur(22px) saturate(120%);
+}
+
+.workspace-dock-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 52px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: color 160ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.workspace-dock-trigger:hover,
+.workspace-dock.is-open .workspace-dock-trigger { color: var(--ink); background: rgb(255 255 255 / 0.94); }
+.workspace-dock-trigger:focus-visible,
+.workspace-dock-options button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.workspace-dock svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+.workspace-dock path,
+.workspace-dock circle { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.workspace-dock-trigger circle { fill: currentColor; stroke: none; }
+
+.workspace-dock-options {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: grid;
+  width: 100%;
+  gap: 8px;
+  padding: 7px;
+  border-radius: 22px;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px) scale(0.96);
+  transform-origin: bottom center;
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(.22,.8,.28,1), visibility 0s linear 220ms;
+}
+
+.workspace-dock.is-open .workspace-dock-options {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+  transition-delay: 0s;
+}
+
+.workspace-dock-options button {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 15px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: color 160ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.workspace-dock-options button:hover { color: var(--ink); background: rgb(255 255 255 / 0.66); }
+.workspace-dock-options button.is-active {
+  color: #51469d;
+  background: linear-gradient(145deg, #fff, rgb(226 223 249 / 0.9));
+  box-shadow: inset 1px 1px 2px #fff, 0 5px 14px rgb(105 94 180 / 0.16);
+}
+
 .canvas-view-switch {
   position: absolute;
   left: 50%;
@@ -283,6 +380,23 @@ body {
   .canvas-view-switch {
     top: calc(env(safe-area-inset-top) + 62px);
   }
+
+  .workspace-dock,
+  .workspace-dock.has-right-panel {
+    top: calc(env(safe-area-inset-top) + 118px);
+    right: 12px;
+    width: 88px;
+    transform: none;
+  }
+
+  .workspace-dock-options {
+    top: calc(100% + 8px);
+    bottom: auto;
+    transform: translateY(-10px) scale(0.96);
+    transform-origin: top center;
+  }
+
+  .workspace-dock.is-open .workspace-dock-options { transform: translateY(0) scale(1); }
 
   .canvas-viewport {
     left: 0 !important;
@@ -469,6 +583,51 @@ body {
 .formal-node-label:focus-visible {
   outline: 2px solid var(--discovery);
   outline-offset: 3px;
+}
+
+.quick-link-endpoint {
+  display: inline-flex;
+  min-height: 34px;
+  max-width: 150px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  overflow: hidden;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / 0.9);
+  border-radius: 999px;
+  background: linear-gradient(145deg, rgb(246 255 255 / 0.94), rgb(215 242 244 / 0.82));
+  color: #37777c;
+  box-shadow: inset 1px 1px 2px #fff, 0 8px 22px rgb(61 137 143 / 0.17);
+  backdrop-filter: blur(16px);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  touch-action: manipulation;
+  animation: quick-link-enter 220ms cubic-bezier(.22,.8,.28,1) both;
+  transition: color 160ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.quick-link-endpoint:hover {
+  color: #245f64;
+  background: rgb(244 255 255 / 0.98);
+  box-shadow: inset 1px 1px 2px #fff, 0 10px 26px rgb(61 137 143 / 0.23);
+}
+
+.quick-link-endpoint.is-new {
+  color: #6256aa;
+  background: linear-gradient(145deg, rgb(255 255 255 / 0.94), rgb(231 227 252 / 0.86));
+  box-shadow: inset 1px 1px 2px #fff, 0 8px 22px rgb(101 88 177 / 0.17);
+}
+.quick-link-endpoint svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.quick-link-endpoint path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.quick-link-endpoint:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+
+@keyframes quick-link-enter {
+  from { opacity: 0; transform: translateY(4px) scale(0.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 canvas {
@@ -762,12 +921,17 @@ canvas {
   .panel-toggle,
   .canvas-view-switch,
   .canvas-view-switch button,
-  .node-label {
+  .node-label,
+  .workspace-dock,
+  .workspace-dock-options,
+  .workspace-dock-trigger,
+  .quick-link-endpoint {
     animation: none;
     transition: none;
   }
 
   .typewriter-hint i { animation: none; }
+  .quick-link-endpoint { animation: none; }
 }
 
 @media (max-width: 640px) {
