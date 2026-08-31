@@ -57,6 +57,7 @@ function setOrthographicZoom(camera: THREE.OrthographicCamera, zoom: number) {
 type QuickAddTarget = {
   world: Vec3;
   screen: { x: number; y: number; width: number; height: number };
+  sourceNodeId?: string;
 };
 
 export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; rightOpen: boolean }) {
@@ -89,7 +90,7 @@ export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; r
         <directionalLight position={[10, 12, 10]} intensity={1.1} color="#ffffff" />
         <pointLight position={[-12, -8, -12]} intensity={0.45} color="#c9c2f6" />
         <BackgroundCreateLayer onCreate={setQuickAddTarget} />
-        <Graph />
+        <Graph onQuickAdd={setQuickAddTarget} />
         <CameraController />
         <AdaptiveControls />
       </Canvas>
@@ -101,7 +102,10 @@ export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; r
           target={quickAddTarget.screen}
           onClose={() => setQuickAddTarget(null)}
           onSubmit={(text) => {
-            addNodeAt(text, quickAddTarget.world);
+            const newNodeId = addNodeAt(text, quickAddTarget.world);
+            if (newNodeId && quickAddTarget.sourceNodeId) {
+              useStore.getState().addEdge(quickAddTarget.sourceNodeId, newNodeId);
+            }
             setQuickAddTarget(null);
           }}
         />
@@ -292,7 +296,7 @@ function QuickAddDialog({
   );
 }
 
-function Graph() {
+function Graph({ onQuickAdd }: { onQuickAdd: (target: QuickAddTarget) => void }) {
   const nodes = useStore((s) => s.idea?.nodes ?? []);
   const edges = useStore((s) => s.idea?.edges ?? []);
   const layoutNonce = useStore((s) => s.layoutNonce);
@@ -303,6 +307,22 @@ function Graph() {
   const connectFromId = useStore((s) => s.connectFromId);
   const suggestions = useStore((s) => s.suggestions);
   const viewMode = useStore((s) => s.viewMode);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const hoverCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const holdNodeHover = (nodeId: string | null) => {
+    if (hoverCloseTimer.current) clearTimeout(hoverCloseTimer.current);
+    if (nodeId) {
+      setHoveredNodeId(nodeId);
+      return;
+    }
+    // 给指针从节点移到预览线/末端按钮留出可操作走廊。
+    hoverCloseTimer.current = setTimeout(() => setHoveredNodeId(null), 900);
+  };
+
+  useEffect(() => () => {
+    if (hoverCloseTimer.current) clearTimeout(hoverCloseTimer.current);
+  }, []);
 
   const nodeIds = nodes.map((n) => n.id).join(",");
   const edgeIds = edges.map((e) => e.id).join(",");
@@ -363,8 +383,19 @@ function Graph() {
           selected={node.id === selectedNodeId}
           isConnectSource={mode === "connect" && connectFromId === node.id}
           connectMode={mode === "connect"}
+          onHoverChange={(hovered) => holdNodeHover(hovered ? node.id : null)}
         />
       ))}
+      {(hoveredNodeId || selectedNodeId) && mode !== "connect" && (
+        <QuickConnectionGuides
+          sourceNodeId={hoveredNodeId ?? selectedNodeId!}
+          nodes={nodes}
+          edges={edges}
+          onHoldHover={() => holdNodeHover(hoveredNodeId ?? selectedNodeId)}
+          onReleaseHover={() => holdNodeHover(null)}
+          onQuickAdd={onQuickAdd}
+        />
+      )}
       {suggestions
         .filter((s) => s.type === "node")
         .map((s) => (
@@ -477,12 +508,14 @@ function NodeMesh({
   selected,
   isConnectSource,
   connectMode,
+  onHoverChange,
 }: {
   node: ThoughtNode;
   dimmed: boolean;
   selected: boolean;
   isConnectSource: boolean;
   connectMode: boolean;
+  onHoverChange: (hovered: boolean) => void;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const labelRef = useRef<HTMLDivElement>(null);
@@ -601,8 +634,8 @@ function NodeMesh({
         onClick={handleClick}
         onDoubleClick={(event) => event.stopPropagation()}
         onPointerDown={onPointerDown}
-        onPointerOver={() => { setHovered(true); document.body.style.cursor = "grab"; }}
-        onPointerOut={() => { setHovered(false); document.body.style.cursor = "default"; }}
+        onPointerOver={() => { setHovered(true); onHoverChange(true); document.body.style.cursor = "grab"; }}
+        onPointerOut={() => { setHovered(false); onHoverChange(false); document.body.style.cursor = "default"; }}
       >
         <sphereGeometry args={[0.78, 24, 24]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
@@ -629,8 +662,8 @@ function NodeMesh({
           aria-label={`选择节点：${node.text}`}
           onPointerDown={onPointerDown}
           onDoubleClick={(event) => event.stopPropagation()}
-          onPointerOver={() => setHovered(true)}
-          onPointerOut={() => setHovered(false)}
+          onPointerOver={() => { setHovered(true); onHoverChange(true); }}
+          onPointerOut={() => { setHovered(false); onHoverChange(false); }}
           onClick={handleClick}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") handleClick();
@@ -639,6 +672,192 @@ function NodeMesh({
         >
           {node.text}
         </div>
+      </Html>
+    </group>
+  );
+}
+
+function QuickConnectionGuides({
+  sourceNodeId,
+  nodes,
+  edges,
+  onHoldHover,
+  onReleaseHover,
+  onQuickAdd,
+}: {
+  sourceNodeId: string;
+  nodes: ThoughtNode[];
+  edges: ThoughtEdge[];
+  onHoldHover: () => void;
+  onReleaseHover: () => void;
+  onQuickAdd: (target: QuickAddTarget) => void;
+}) {
+  const viewMode = useStore((state) => state.viewMode);
+  const connectedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const edge of edges) {
+      if (edge.sourceNodeId === sourceNodeId) ids.add(edge.targetNodeId);
+      if (edge.targetNodeId === sourceNodeId) ids.add(edge.sourceNodeId);
+    }
+    return ids;
+  }, [edges, sourceNodeId]);
+  const nearestNode = useMemo(() => {
+    const source = nodes.find((node) => node.id === sourceNodeId);
+    if (!source) return null;
+    return nodes
+      .filter((node) => node.id !== sourceNodeId && !connectedIds.has(node.id))
+      .map((node) => ({
+        node,
+        distance: Math.hypot(
+          node.position.x - source.position.x,
+          node.position.y - source.position.y,
+          node.position.z - source.position.z,
+        ),
+      }))
+      .sort((a, b) => a.distance - b.distance)[0]?.node ?? null;
+  }, [connectedIds, nodes, sourceNodeId]);
+
+  const getNewDestination = (source: THREE.Vector3, target?: THREE.Vector3) => {
+    if (target) {
+      const direction = target.clone().sub(source);
+      const perpendicular = new THREE.Vector3(-direction.y, direction.x, viewMode === "3d" ? 1.8 : 0);
+      if (perpendicular.lengthSq() > 0.01) return source.clone().add(perpendicular.normalize().multiplyScalar(7));
+    }
+    return source.clone().add(new THREE.Vector3(6.5, -4.2, viewMode === "3d" ? 2.2 : 0));
+  };
+
+  return (
+    <>
+      {nearestNode && (
+        <QuickGuide
+          sourceNodeId={sourceNodeId}
+          targetNodeId={nearestNode.id}
+          label={`连到 ${nearestNode.text}`}
+          kind="existing"
+          onHoldHover={onHoldHover}
+          onReleaseHover={onReleaseHover}
+          onActivate={() => useStore.getState().addEdge(sourceNodeId, nearestNode.id)}
+        />
+      )}
+      <QuickGuide
+        sourceNodeId={sourceNodeId}
+        label="新节点"
+        kind="new"
+        getDestination={(source) => {
+          const nearestPosition = nearestNode
+            ? displayPositionsRef.current.get(nearestNode.id) ?? positionsRef.current.get(nearestNode.id)
+            : undefined;
+          return getNewDestination(source, nearestPosition);
+        }}
+        onHoldHover={onHoldHover}
+        onReleaseHover={onReleaseHover}
+        onActivate={(event, destination) => {
+          const canvasRect = (event.nativeEvent.target as Element).closest("canvas")?.getBoundingClientRect()
+            ?? document.querySelector("canvas")?.getBoundingClientRect();
+          if (!canvasRect) return;
+          onQuickAdd({
+            sourceNodeId,
+            world: { x: destination.x, y: destination.y, z: destination.z },
+            screen: {
+              x: event.nativeEvent.clientX - canvasRect.left,
+              y: event.nativeEvent.clientY - canvasRect.top,
+              width: canvasRect.width,
+              height: canvasRect.height,
+            },
+          });
+        }}
+      />
+    </>
+  );
+}
+
+function QuickGuide({
+  sourceNodeId,
+  targetNodeId,
+  label,
+  kind,
+  getDestination,
+  onHoldHover,
+  onReleaseHover,
+  onActivate,
+}: {
+  sourceNodeId: string;
+  targetNodeId?: string;
+  label: string;
+  kind: "existing" | "new";
+  getDestination?: (source: THREE.Vector3) => THREE.Vector3;
+  onHoldHover: () => void;
+  onReleaseHover: () => void;
+  onActivate: (event: ThreeEvent<MouseEvent>, destination: THREE.Vector3) => void;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const destinationRef = useRef(new THREE.Vector3());
+  const sourceRef = useRef(new THREE.Vector3());
+  const midpointRef = useRef(new THREE.Vector3());
+  const directionRef = useRef(new THREE.Vector3());
+
+  useFrame(() => {
+    const source = displayPositionsRef.current.get(sourceNodeId) ?? positionsRef.current.get(sourceNodeId);
+    const target = targetNodeId
+      ? displayPositionsRef.current.get(targetNodeId) ?? positionsRef.current.get(targetNodeId)
+      : source && getDestination?.(source);
+    const group = groupRef.current;
+    if (!source || !target || !group) return;
+    sourceRef.current.copy(source);
+    destinationRef.current.copy(target);
+    midpointRef.current.addVectors(source, target).multiplyScalar(0.5);
+    directionRef.current.subVectors(target, source);
+    const length = Math.max(directionRef.current.length(), 0.001);
+    group.position.copy(midpointRef.current);
+    group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), directionRef.current.normalize());
+    group.scale.set(1, length, 1);
+  });
+
+  const activate = (event: ThreeEvent<MouseEvent>) => {
+    event.stopPropagation();
+    onActivate(event, destinationRef.current.clone());
+  };
+
+  return (
+    <group ref={groupRef}>
+      <mesh
+        onClick={activate}
+        onPointerOver={() => { onHoldHover(); document.body.style.cursor = "pointer"; }}
+        onPointerOut={() => { onReleaseHover(); document.body.style.cursor = "default"; }}
+      >
+        <cylinderGeometry args={[0.25, 0.25, 1, 10]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+      <Line
+        points={[[0, -0.5, 0], [0, 0.5, 0]]}
+        color={kind === "existing" ? "#68bfc5" : "#9b8ee7"}
+        lineWidth={kind === "existing" ? 1.8 : 1.35}
+        transparent
+        opacity={kind === "existing" ? 0.72 : 0.58}
+        dashed={kind === "new"}
+        dashSize={0.16}
+        gapSize={0.11}
+        depthWrite={false}
+      />
+      <Html position={[0, 0.5, 0]} center zIndexRange={[14, 4]}>
+        <button
+          type="button"
+          className={`quick-link-endpoint ${kind === "new" ? "is-new" : ""}`}
+          aria-label={kind === "new" ? "创建并连接新节点" : label}
+          onPointerEnter={onHoldHover}
+          onPointerLeave={onReleaseHover}
+          onClick={(event) => {
+            event.stopPropagation();
+            const synthetic = event as unknown as ThreeEvent<MouseEvent>;
+            onActivate(synthetic, destinationRef.current.clone());
+          }}
+        >
+          {kind === "new" ? (
+            <><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 5v10M5 10h10" /></svg><span>新节点</span></>
+          ) : (
+            <span>{label}</span>
+          )}
+        </button>
       </Html>
     </group>
   );
