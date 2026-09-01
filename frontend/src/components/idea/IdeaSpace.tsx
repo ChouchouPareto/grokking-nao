@@ -114,7 +114,11 @@ export default function IdeaSpace({ id }: { id: string }) {
       const isEditing = Boolean(
         target?.matches("input, textarea, select") || target?.isContentEditable,
       );
-      if (event.key === "Escape") useStore.getState().setMode("browse");
+      if (event.key === "Escape") {
+        const state = useStore.getState();
+        state.setMode("browse");
+        if (state.focusedNodeId) state.requestGlobalView();
+      }
       if (
         event.key.toLowerCase() === "c" &&
         !isEditing &&
@@ -176,7 +180,16 @@ export default function IdeaSpace({ id }: { id: string }) {
     <div className="idea-workspace relative h-screen w-screen overflow-hidden bg-bg text-ink">
       <WorkspaceAtmosphere />
       <Canvas3D leftOpen={leftOpen} rightOpen={rightVisible} />
-      <TopBar />
+      <TopBar
+        dockOpen={dockOpen}
+        leftOpen={leftOpen}
+        rightVisible={rightVisible}
+        rightTab={rightTab}
+        onDockEnter={revealDock}
+        onDockLeave={scheduleDockClose}
+        onDockToggle={() => setDockOpen((open) => !open)}
+        onDockSelect={selectDockTarget}
+      />
       {(leftOpen || rightVisible) && <button type="button" className="mobile-panel-backdrop" aria-label="关闭侧栏" onClick={closeMobilePanel} />}
       <div className="edge-hover-zone edge-hover-zone-left" onMouseEnter={revealLeft} onMouseLeave={scheduleLeftClose} aria-hidden="true" />
       <div className="edge-hover-zone edge-hover-zone-right" onMouseEnter={revealRight} onMouseLeave={scheduleRightClose} aria-hidden="true" />
@@ -190,34 +203,6 @@ export default function IdeaSpace({ id }: { id: string }) {
         nodeKey={selectedNodeId ? `node-${selectedNodeId}` : "node-none"}
         edgeKey={selectedEdgeId ? `edge-${selectedEdgeId}` : "edge-none"}
       />
-      <nav
-        className={`workspace-dock ${dockOpen ? "is-open" : ""} ${rightVisible ? "has-right-panel" : ""}`}
-        aria-label="思考空间面板"
-        onPointerEnter={(event) => { if (event.pointerType === "mouse") revealDock(); }}
-        onPointerLeave={(event) => { if (event.pointerType === "mouse") scheduleDockClose(); }}
-      >
-        <div className="workspace-dock-options" aria-hidden={!dockOpen}>
-          <button type="button" tabIndex={dockOpen ? 0 : -1} className={leftOpen ? "is-active" : ""} onClick={() => selectDockTarget("tools")}>
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6" /></svg><span>工具</span>
-          </button>
-          <button type="button" tabIndex={dockOpen ? 0 : -1} className={rightVisible && rightTab === "context" ? "is-active" : ""} onClick={() => selectDockTarget("context")}>
-            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /></svg><span>何</span>
-          </button>
-          <button type="button" tabIndex={dockOpen ? 0 : -1} className={rightVisible && rightTab === "summary" ? "is-active" : ""} onClick={() => selectDockTarget("summary")}>
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5h14v14H5zM8 9h8M8 13h6" /></svg><span>论</span>
-          </button>
-        </div>
-        <button
-          type="button"
-          className="workspace-dock-trigger"
-          aria-label={dockOpen ? "收起面板选择" : "展开面板选择"}
-          aria-expanded={dockOpen}
-          onClick={() => setDockOpen((open) => !open)}
-        >
-          <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="7" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="17" cy="12" r="1.5" /></svg>
-          <span>面板</span>
-        </button>
-      </nav>
       {(leftOpen || rightVisible) && <button type="button" className="mobile-panel-close" aria-label="关闭侧栏" onClick={closeMobilePanel}>✕</button>}
       {addOpen && <AddNodesDialog onClose={() => setAddOpen(false)} />}
     </div>
@@ -239,7 +224,25 @@ function WorkspaceAtmosphere() {
   );
 }
 
-function TopBar() {
+function TopBar({
+  dockOpen,
+  leftOpen,
+  rightVisible,
+  rightTab,
+  onDockEnter,
+  onDockLeave,
+  onDockToggle,
+  onDockSelect,
+}: {
+  dockOpen: boolean;
+  leftOpen: boolean;
+  rightVisible: boolean;
+  rightTab: "context" | "summary";
+  onDockEnter: () => void;
+  onDockLeave: () => void;
+  onDockToggle: () => void;
+  onDockSelect: (target: "tools" | "context" | "summary") => void;
+}) {
   const router = useRouter();
   const idea = useStore((s) => s.idea);
   const saveStatus = useStore((s) => s.saveStatus);
@@ -297,25 +300,55 @@ function TopBar() {
           </button>
         )}
       </div>
-      <div className="canvas-view-switch pointer-events-auto" role="group" aria-label="画布视图">
-        <button
-          type="button"
-          aria-pressed={viewMode === "3d"}
-          className={viewMode === "3d" ? "is-active" : ""}
-          onClick={() => setViewMode("3d")}
+      <div className="topbar-view-controls pointer-events-auto">
+        <div className="canvas-view-switch" role="group" aria-label="画布视图">
+          <button
+            type="button"
+            aria-pressed={viewMode === "3d"}
+            className={viewMode === "3d" ? "is-active" : ""}
+            onClick={() => setViewMode("3d")}
+          >
+            <span className="view-switch-icon" aria-hidden="true">◇</span>
+            3D 空间
+          </button>
+          <button
+            type="button"
+            aria-pressed={viewMode === "2d"}
+            className={viewMode === "2d" ? "is-active" : ""}
+            onClick={() => setViewMode("2d")}
+          >
+            <span className="view-switch-icon" aria-hidden="true">□</span>
+            2D 平面
+          </button>
+        </div>
+        <nav
+          className={`workspace-dock ${dockOpen ? "is-open" : ""}`}
+          aria-label="思考空间面板"
+          onPointerEnter={(event) => { if (event.pointerType === "mouse") onDockEnter(); }}
+          onPointerLeave={(event) => { if (event.pointerType === "mouse") onDockLeave(); }}
         >
-          <span className="view-switch-icon" aria-hidden="true">◇</span>
-          3D 空间
-        </button>
-        <button
-          type="button"
-          aria-pressed={viewMode === "2d"}
-          className={viewMode === "2d" ? "is-active" : ""}
-          onClick={() => setViewMode("2d")}
-        >
-          <span className="view-switch-icon" aria-hidden="true">□</span>
-          2D 平面
-        </button>
+          <div className="workspace-dock-options" aria-hidden={!dockOpen}>
+            <button type="button" tabIndex={dockOpen ? 0 : -1} className={leftOpen ? "is-active" : ""} onClick={() => onDockSelect("tools")}>
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6" /></svg><span>工具</span>
+            </button>
+            <button type="button" tabIndex={dockOpen ? 0 : -1} className={rightVisible && rightTab === "context" ? "is-active" : ""} onClick={() => onDockSelect("context")}>
+              <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /></svg><span>何</span>
+            </button>
+            <button type="button" tabIndex={dockOpen ? 0 : -1} className={rightVisible && rightTab === "summary" ? "is-active" : ""} onClick={() => onDockSelect("summary")}>
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5h14v14H5zM8 9h8M8 13h6" /></svg><span>论</span>
+            </button>
+          </div>
+          <button
+            type="button"
+            className="workspace-dock-trigger"
+            aria-label={dockOpen ? "收起面板选择" : "展开面板选择"}
+            aria-expanded={dockOpen}
+            onClick={onDockToggle}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="7" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="17" cy="12" r="1.5" /></svg>
+            <span>面板</span>
+          </button>
+        </nav>
       </div>
       <div className="pointer-events-auto flex items-center gap-3 text-xs">
         {(idea?.discoveryCount ?? 0) > 0 && (

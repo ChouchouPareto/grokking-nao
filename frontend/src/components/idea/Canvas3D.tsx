@@ -3,7 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { OrbitControls, Html, Line } from "@react-three/drei";
+import {
+  OrbitControls,
+  Html,
+  Line,
+  QuadraticBezierLine,
+  type QuadraticBezierLineRef,
+} from "@react-three/drei";
 import type { AISuggestion, ThoughtEdge, ThoughtNode } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import {
@@ -33,6 +39,18 @@ type LabelLOD = "full" | "compact" | "point";
 const displayPositionsRef: { current: Map<string, THREE.Vector3> } = { current: new Map() };
 const labelLODRef: { current: Map<string, LabelLOD> } = { current: new Map() };
 const candidateDisplayKey = (id: string) => `candidate:${id}`;
+
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduced(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return reduced;
+}
 
 // Three.js cameras are intentionally mutable scene objects. Keeping projection
 // mutations in small helpers prevents React state from being used for frame data.
@@ -89,6 +107,8 @@ export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; r
         <ambientLight intensity={1.8} />
         <directionalLight position={[10, 12, 10]} intensity={1.1} color="#ffffff" />
         <pointLight position={[-12, -8, -12]} intensity={0.45} color="#c9c2f6" />
+        <SceneAtmosphere />
+        <SpatialDepthField />
         <BackgroundCreateLayer onCreate={setQuickAddTarget} />
         <Graph onQuickAdd={setQuickAddTarget} />
         <CameraController />
@@ -111,6 +131,55 @@ export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; r
         />
       )}
     </div>
+  );
+}
+
+function SceneAtmosphere() {
+  const viewMode = useStore((state) => state.viewMode);
+  return viewMode === "3d"
+    ? <fogExp2 attach="fog" args={["#eef2f8", 0.009]} />
+    : null;
+}
+
+function SpatialDepthField() {
+  const pointsRef = useRef<THREE.Points>(null);
+  const viewMode = useStore((state) => state.viewMode);
+  const reducedMotion = usePrefersReducedMotion();
+  const positions = useMemo(() => {
+    const values = new Float32Array(540);
+    let seed = 1729;
+    const random = () => {
+      seed = (seed * 16807) % 2147483647;
+      return (seed - 1) / 2147483646;
+    };
+    for (let index = 0; index < values.length; index += 3) {
+      values[index] = (random() - 0.5) * 84;
+      values[index + 1] = (random() - 0.5) * 58;
+      values[index + 2] = -34 + random() * 48;
+    }
+    return values;
+  }, []);
+
+  useFrame((_, delta) => {
+    if (pointsRef.current && viewMode === "3d" && !reducedMotion) {
+      pointsRef.current.rotation.z += Math.min(delta, 0.05) * 0.006;
+    }
+  });
+
+  return (
+    <points ref={pointsRef} visible={viewMode === "3d"} frustumCulled={false}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <pointsMaterial
+        color="#8f88cf"
+        size={0.075}
+        sizeAttenuation
+        transparent
+        opacity={0.2}
+        depthWrite={false}
+      />
+    </points>
   );
 }
 
@@ -362,7 +431,7 @@ function Graph({ onQuickAdd }: { onQuickAdd: (target: QuickAddTarget) => void })
 
   return (
     <group>
-      <SceneDetailManager nodes={nodes} suggestions={suggestions.filter((suggestion) => suggestion.type === "node")} />
+      <SceneDetailManager nodes={nodes} edges={edges} suggestions={suggestions.filter((suggestion) => suggestion.type === "node")} />
       {edges.map((edge) => (
         <EdgeMesh
           key={edge.id}
@@ -373,6 +442,10 @@ function Graph({ onQuickAdd }: { onQuickAdd: (target: QuickAddTarget) => void })
             edge.targetNodeId !== focusedNodeId
           }
           selected={edge.id === selectedEdgeId}
+          focused={Boolean(
+            focusedNodeId &&
+            (edge.sourceNodeId === focusedNodeId || edge.targetNodeId === focusedNodeId),
+          )}
         />
       ))}
       {nodes.map((node) => (
@@ -410,18 +483,39 @@ function Graph({ onQuickAdd }: { onQuickAdd: (target: QuickAddTarget) => void })
   );
 }
 
-function SceneDetailManager({ nodes, suggestions }: { nodes: ThoughtNode[]; suggestions: AISuggestion[] }) {
+function SceneDetailManager({
+  nodes,
+  edges,
+  suggestions,
+}: {
+  nodes: ThoughtNode[];
+  edges: ThoughtEdge[];
+  suggestions: AISuggestion[];
+}) {
   const viewMode = useStore((state) => state.viewMode);
   const selectedNodeId = useStore((state) => state.selectedNodeId);
   const focusedNodeId = useStore((state) => state.focusedNodeId);
   const selectedSuggestionId = useStore((state) => state.selectedSuggestionId);
   const blendRef = useRef(viewMode === "2d" ? 1 : 0);
   const projected = useRef(new THREE.Vector3());
+  const cameraDirection = useRef(new THREE.Vector3());
+
+  const focusSet = useMemo(() => {
+    const ids = new Set<string>();
+    if (!focusedNodeId) return ids;
+    ids.add(focusedNodeId);
+    for (const edge of edges) {
+      if (edge.sourceNodeId === focusedNodeId) ids.add(edge.targetNodeId);
+      if (edge.targetNodeId === focusedNodeId) ids.add(edge.sourceNodeId);
+    }
+    return ids;
+  }, [edges, focusedNodeId]);
 
   useFrame(({ camera, size }, delta) => {
     const targetBlend = viewMode === "2d" ? 1 : 0;
     const blendSpeed = 1 - Math.exp(-Math.min(delta, 0.05) * 8.5);
     blendRef.current = THREE.MathUtils.lerp(blendRef.current, targetBlend, blendSpeed);
+    camera.getWorldDirection(cameraDirection.current).normalize();
 
     for (const node of nodes) {
       const source3D = positionsRef.current.get(node.id) ?? new THREE.Vector3(node.position.x, node.position.y, node.position.z);
@@ -432,6 +526,13 @@ function SceneDetailManager({ nodes, suggestions }: { nodes: ThoughtNode[]; sugg
         displayPositionsRef.current.set(node.id, display);
       }
       const target = source3D.clone().lerp(source2D, blendRef.current);
+      if (focusedNodeId && viewMode === "3d") {
+        if (node.id === focusedNodeId) {
+          target.addScaledVector(cameraDirection.current, -1.15);
+        } else if (!focusSet.has(node.id)) {
+          target.addScaledVector(cameraDirection.current, 4.2);
+        }
+      }
       display.lerp(target, blendSpeed);
     }
     for (const suggestion of suggestions) {
@@ -641,15 +742,33 @@ function NodeMesh({
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       <mesh>
-        <sphereGeometry args={[0.18, 20, 20]} />
+        <sphereGeometry args={[selected || hovered ? 0.46 : 0.38, 28, 28]} />
         <meshStandardMaterial
           color={baseColor}
-          roughness={0.18}
-          metalness={0.04}
+          emissive={baseColor}
+          emissiveIntensity={selected || hovered ? 0.72 : 0.34}
+          roughness={0.22}
+          metalness={0.08}
           transparent
-          opacity={opacity * 0.16}
+          opacity={opacity * (selected || hovered ? 0.2 : 0.12)}
           depthWrite={false}
         />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[selected || hovered ? 0.16 : 0.13, 24, 24]} />
+        <meshStandardMaterial
+          color={selected || hovered ? "#f7fbff" : baseColor}
+          emissive={baseColor}
+          emissiveIntensity={1.1}
+          roughness={0.12}
+          metalness={0.18}
+          transparent
+          opacity={opacity * 0.94}
+        />
+      </mesh>
+      <mesh rotation={[1.08, 0.22, 0.38]}>
+        <torusGeometry args={[selected || hovered ? 0.34 : 0.29, 0.012, 8, 48]} />
+        <meshBasicMaterial color={baseColor} transparent opacity={opacity * (selected || hovered ? 0.72 : 0.34)} depthWrite={false} />
       </mesh>
       <Html position={[0, 0, 0]} center zIndexRange={[10, 0]}>
         <div
@@ -791,10 +910,14 @@ function QuickGuide({
   onActivate: (event: ThreeEvent<MouseEvent>, destination: THREE.Vector3) => void;
 }) {
   const groupRef = useRef<THREE.Group>(null);
+  const [hovered, setHovered] = useState(false);
   const destinationRef = useRef(new THREE.Vector3());
   const sourceRef = useRef(new THREE.Vector3());
   const midpointRef = useRef(new THREE.Vector3());
   const directionRef = useRef(new THREE.Vector3());
+  const flowRef = useRef<THREE.Mesh>(null);
+  const viewMode = useStore((state) => state.viewMode);
+  const reducedMotion = usePrefersReducedMotion();
 
   useFrame(() => {
     const source = displayPositionsRef.current.get(sourceNodeId) ?? positionsRef.current.get(sourceNodeId);
@@ -811,6 +934,11 @@ function QuickGuide({
     group.position.copy(midpointRef.current);
     group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), directionRef.current.normalize());
     group.scale.set(1, length, 1);
+    if (flowRef.current) {
+      const progress = reducedMotion ? 0.5 : (performance.now() * 0.00022) % 1;
+      flowRef.current.position.y = -0.42 + progress * 0.84;
+      flowRef.current.scale.set(1, 1 / length, 1);
+    }
   });
 
   const activate = (event: ThreeEvent<MouseEvent>) => {
@@ -818,34 +946,65 @@ function QuickGuide({
     onActivate(event, destinationRef.current.clone());
   };
 
+  const setHoverState = (nextHovered: boolean) => {
+    setHovered(nextHovered);
+    if (nextHovered) {
+      onHoldHover();
+      document.body.style.cursor = "pointer";
+      return;
+    }
+    onReleaseHover();
+    document.body.style.cursor = "default";
+  };
+
   return (
     <group ref={groupRef}>
       <mesh
         onClick={activate}
-        onPointerOver={() => { onHoldHover(); document.body.style.cursor = "pointer"; }}
-        onPointerOut={() => { onReleaseHover(); document.body.style.cursor = "default"; }}
+        onPointerOver={() => setHoverState(true)}
+        onPointerOut={() => setHoverState(false)}
       >
-        <cylinderGeometry args={[0.25, 0.25, 1, 10]} />
+        {/* 视觉上仍是细线，但扩大射线检测区，避免要求用户精准点在像素级细线上。 */}
+        <cylinderGeometry args={[0.38, 0.38, 1, 12]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       <Line
         points={[[0, -0.5, 0], [0, 0.5, 0]]}
         color={kind === "existing" ? "#68bfc5" : "#9b8ee7"}
-        lineWidth={kind === "existing" ? 1.8 : 1.35}
+        lineWidth={hovered ? 2.8 : kind === "existing" ? 1.8 : 1.35}
         transparent
-        opacity={kind === "existing" ? 0.72 : 0.58}
+        opacity={hovered ? 0.96 : kind === "existing" ? 0.72 : 0.58}
         dashed={kind === "new"}
         dashSize={0.16}
         gapSize={0.11}
         depthWrite={false}
       />
+      {viewMode === "3d" && (
+        <>
+          <mesh raycast={() => null}>
+            <cylinderGeometry args={[hovered ? 0.026 : 0.018, hovered ? 0.026 : 0.018, 1, 10]} />
+            <meshStandardMaterial
+              color={kind === "existing" ? "#83d8dc" : "#b4a8f3"}
+              emissive={kind === "existing" ? "#68bfc5" : "#9b8ee7"}
+              emissiveIntensity={hovered ? 1.1 : 0.62}
+              transparent
+              opacity={hovered ? 0.66 : 0.36}
+              depthWrite={false}
+            />
+          </mesh>
+          <mesh ref={flowRef} raycast={() => null}>
+            <sphereGeometry args={[hovered ? 0.095 : 0.072, 16, 16]} />
+            <meshBasicMaterial color="#ffffff" transparent opacity={hovered ? 0.96 : 0.72} depthWrite={false} />
+          </mesh>
+        </>
+      )}
       <Html position={[0, 0.5, 0]} center zIndexRange={[14, 4]}>
         <button
           type="button"
-          className={`quick-link-endpoint ${kind === "new" ? "is-new" : ""}`}
+          className={`quick-link-endpoint ${kind === "new" ? "is-new" : ""} ${hovered ? "is-line-hovered" : ""}`}
           aria-label={kind === "new" ? "创建并连接新节点" : label}
-          onPointerEnter={onHoldHover}
-          onPointerLeave={onReleaseHover}
+          onPointerEnter={() => setHoverState(true)}
+          onPointerLeave={() => setHoverState(false)}
           onClick={(event) => {
             event.stopPropagation();
             const synthetic = event as unknown as ThreeEvent<MouseEvent>;
@@ -867,53 +1026,126 @@ function EdgeMesh({
   edge,
   dimmed,
   selected,
+  focused,
 }: {
   edge: ThoughtEdge;
   dimmed: boolean;
   selected: boolean;
+  focused: boolean;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
+  const glowRef = useRef<QuadraticBezierLineRef>(null);
+  const lineRef = useRef<QuadraticBezierLineRef>(null);
+  const hitRef = useRef<QuadraticBezierLineRef>(null);
+  const flowRef = useRef<THREE.Mesh>(null);
+  const curveRef = useRef(new THREE.QuadraticBezierCurve3());
   const tmpA = useRef(new THREE.Vector3());
   const tmpB = useRef(new THREE.Vector3());
   const tmpMid = useRef(new THREE.Vector3());
   const tmpDir = useRef(new THREE.Vector3());
+  const tmpCameraDir = useRef(new THREE.Vector3());
+  const tmpPerpendicular = useRef(new THREE.Vector3());
+  const flowPosition = useRef(new THREE.Vector3());
+  const viewMode = useStore((state) => state.viewMode);
+  const reducedMotion = usePrefersReducedMotion();
+  const camera = useThree((state) => state.camera);
+  const initialCurve = useMemo(() => ({
+    start: new THREE.Vector3(),
+    end: new THREE.Vector3(0, 0.001, 0),
+    mid: new THREE.Vector3(0, 0.0005, 0),
+  }), []);
+  const curveDirection = useMemo(() => {
+    let hash = 0;
+    for (let index = 0; index < edge.id.length; index += 1) hash = ((hash << 5) - hash + edge.id.charCodeAt(index)) | 0;
+    return hash % 2 === 0 ? 1 : -1;
+  }, [edge.id]);
 
   useFrame(() => {
     const a = displayPositionsRef.current.get(edge.sourceNodeId) ?? positionsRef.current.get(edge.sourceNodeId);
     const b = displayPositionsRef.current.get(edge.targetNodeId) ?? positionsRef.current.get(edge.targetNodeId);
-    const g = groupRef.current;
-    if (!a || !b || !g) return;
+    if (!a || !b) return;
     tmpA.current.copy(a);
     tmpB.current.copy(b);
     tmpMid.current.addVectors(tmpA.current, tmpB.current).multiplyScalar(0.5);
     tmpDir.current.subVectors(tmpB.current, tmpA.current);
-    const len = Math.max(tmpDir.current.length(), 0.001);
-    g.position.copy(tmpMid.current);
-    g.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 1, 0),
-      tmpDir.current.normalize(),
-    );
-    g.scale.set(1, len, 1);
+    const length = Math.max(tmpDir.current.length(), 0.001);
+    camera.getWorldDirection(tmpCameraDir.current).normalize();
+    tmpPerpendicular.current.crossVectors(tmpDir.current, tmpCameraDir.current);
+    if (tmpPerpendicular.current.lengthSq() < 0.001) tmpPerpendicular.current.set(0, 1, 0);
+    const bend = viewMode === "3d"
+      ? THREE.MathUtils.clamp(length * 0.105, 0.55, 1.85)
+      : THREE.MathUtils.clamp(length * 0.055, 0.3, 0.9);
+    tmpMid.current.addScaledVector(tmpPerpendicular.current.normalize(), bend * curveDirection);
+
+    curveRef.current.v0.copy(tmpA.current);
+    curveRef.current.v1.copy(tmpMid.current);
+    curveRef.current.v2.copy(tmpB.current);
+    glowRef.current?.setPoints(tmpA.current, tmpB.current, tmpMid.current);
+    lineRef.current?.setPoints(tmpA.current, tmpB.current, tmpMid.current);
+    hitRef.current?.setPoints(tmpA.current, tmpB.current, tmpMid.current);
+
+    if (flowRef.current) {
+      const progress = reducedMotion ? 0.54 : (performance.now() * 0.00016) % 1;
+      curveRef.current.getPoint(progress, flowPosition.current);
+      flowRef.current.position.copy(flowPosition.current);
+    }
   });
 
   const color = edge.isDiscovery ? EDGE_DISCOVERY_COLOR : EDGE_COLOR;
   const opacity = dimmed ? 0.08 : edge.isDiscovery ? 0.72 : selected ? 0.7 : 0.42;
   const lineWidth = edge.isDiscovery ? 1.5 : selected ? 1.35 : 0.9;
 
+  const selectEdge = (event: ThreeEvent<MouseEvent>) => {
+    event.stopPropagation();
+    const state = useStore.getState();
+    if (state.mode === "browse") state.selectEdge(edge.id);
+  };
+
   return (
-    <group ref={groupRef}>
-      <mesh
-        onClick={(e) => {
-          e.stopPropagation();
-          const s = useStore.getState();
-          if (s.mode === "browse") s.selectEdge(edge.id);
-        }}
-      >
-        <cylinderGeometry args={[0.16, 0.16, 1, 8]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-      </mesh>
-      <Line points={[[0, -0.5, 0], [0, 0.5, 0]]} color={color} lineWidth={lineWidth * 4} transparent opacity={opacity * 0.1} depthWrite={false} />
-      <Line points={[[0, -0.5, 0], [0, 0.5, 0]]} color={color} lineWidth={lineWidth} transparent opacity={opacity} depthWrite={false} />
+    <group>
+      <QuadraticBezierLine
+        ref={hitRef}
+        start={initialCurve.start}
+        end={initialCurve.end}
+        mid={initialCurve.mid}
+        color={color}
+        lineWidth={10}
+        transparent
+        opacity={0}
+        depthWrite={false}
+        onClick={selectEdge}
+        onPointerOver={() => { document.body.style.cursor = "pointer"; }}
+        onPointerOut={() => { document.body.style.cursor = "default"; }}
+      />
+      <QuadraticBezierLine
+        ref={glowRef}
+        start={initialCurve.start}
+        end={initialCurve.end}
+        mid={initialCurve.mid}
+        color={color}
+        lineWidth={lineWidth * 5}
+        transparent
+        opacity={opacity * 0.12}
+        depthWrite={false}
+        raycast={() => null}
+      />
+      <QuadraticBezierLine
+        ref={lineRef}
+        start={initialCurve.start}
+        end={initialCurve.end}
+        mid={initialCurve.mid}
+        color={color}
+        lineWidth={lineWidth}
+        transparent
+        opacity={opacity}
+        depthWrite={false}
+        raycast={() => null}
+      />
+      {viewMode === "3d" && (focused || selected) && (
+        <mesh ref={flowRef} raycast={() => null}>
+          <sphereGeometry args={[selected ? 0.095 : 0.075, 16, 16]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={dimmed ? 0.12 : 0.9} depthWrite={false} />
+        </mesh>
+      )}
     </group>
   );
 }
@@ -1194,8 +1426,7 @@ function CameraController() {
         .idea?.nodes.find((node) => node.id === cameraCmd.nodeId);
       if (!controls || (!livePosition && !storedNode)) return;
 
-      // 保留当前缩放与观察方向，只平移相机和控制中心。
-      // 这样被点击的节点会精确落在当前 Canvas 的几何中心，而不是被拉近。
+      // 聚焦时保留观察方向，同时向目标推进，建立真正的空间进入感。
       const toTarget = livePosition
         ? livePosition.clone()
         : new THREE.Vector3(
@@ -1206,6 +1437,9 @@ function CameraController() {
       if (camera instanceof THREE.OrthographicCamera) toTarget.z = 0;
       const cameraOffset = camera.position.clone().sub(controls.target);
       if (cameraOffset.lengthSq() < 1e-6) cameraOffset.set(0, 0, 14);
+      if (camera instanceof THREE.PerspectiveCamera) {
+        cameraOffset.setLength(THREE.MathUtils.clamp(cameraOffset.length() * 0.62, 9.5, 15));
+      }
       const toCamera = toTarget.clone().add(cameraOffset);
       const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       if (reduceMotion) {

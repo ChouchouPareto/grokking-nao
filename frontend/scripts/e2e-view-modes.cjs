@@ -52,10 +52,17 @@ function report(name, passed, detail = "") {
   report("悬停节点显示就地连线", await existingGuide.isVisible()
     && await page.getByRole("button", { name: "创建并连接新节点" }).isVisible());
   const firstGuideLabel = await existingGuide.textContent();
-  await existingGuide.click({ force: true });
+  const sourceBox = await firstNode.boundingBox();
+  const guideBox = await existingGuide.boundingBox();
+  if (sourceBox && guideBox) {
+    await page.mouse.click(
+      (sourceBox.x + sourceBox.width / 2 + guideBox.x + guideBox.width / 2) / 2,
+      (sourceBox.y + sourceBox.height / 2 + guideBox.y + guideBox.height / 2) / 2,
+    );
+  }
   await page.waitForTimeout(350);
   const nextGuideLabel = await page.getByRole("button", { name: /^连到 / }).first().textContent().catch(() => null);
-  report("点击预览线直接连接", Boolean(firstGuideLabel && nextGuideLabel && firstGuideLabel !== nextGuideLabel));
+  report("点击线本身直接连接", Boolean(sourceBox && guideBox && firstGuideLabel && nextGuideLabel && firstGuideLabel !== nextGuideLabel));
 
   await firstNode.hover({ force: true });
   await page.waitForTimeout(300);
@@ -64,6 +71,15 @@ function report(name, passed, detail = "") {
   await page.getByRole("button", { name: "添加节点" }).click();
   await page.waitForTimeout(450);
   report("空白方向可创建并自动连接", await page.getByTestId("formal-node").count() === initialCount + 1);
+
+  await firstNode.click({ force: true });
+  await page.waitForTimeout(700);
+  const focusedOpacities = await page.getByTestId("formal-node").evaluateAll((items) => items.map((item) => item.style.opacity));
+  report("聚焦时无关节点后退并弱化", focusedOpacities.includes("0.2"));
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(700);
+  const globalOpacities = await page.getByTestId("formal-node").evaluateAll((items) => items.map((item) => item.style.opacity));
+  report("Esc 退出聚焦并返回全局", globalOpacities.every((opacity) => opacity === "1"));
 
   await page.getByRole("button", { name: "2D 平面" }).click();
   await page.waitForTimeout(1100);

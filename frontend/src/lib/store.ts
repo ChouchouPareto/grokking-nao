@@ -530,7 +530,10 @@ export const useStore = create<IdeaStore>()((set, get) => {
 
     requestGlobalView() {
       cameraNonce += 1;
-      set({ cameraCmd: { type: "global", nonce: cameraNonce } });
+      set({
+        focusedNodeId: null,
+        cameraCmd: { type: "global", nonce: cameraNonce },
+      });
     },
 
     requestFocusView(nodeId) {
