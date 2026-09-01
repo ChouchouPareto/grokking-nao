@@ -1,8 +1,12 @@
 const { chromium } = require("playwright-core");
 
 const BASE = process.env.BASE_URL || "http://localhost:3010";
-const INVITE_CODE = process.env.INVITE_CODE || "";
+const INVITE_CODE = process.env.INVITE_CODE;
 const CHROME_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+if (!INVITE_CODE) {
+  throw new Error("INVITE_CODE must be provided through a private environment variable");
+}
 
 function report(name, passed, detail = "") {
   console.log(`${passed ? "✅" : "❌"} ${name}${detail ? ` — ${detail}` : ""}`);
