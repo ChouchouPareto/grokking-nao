@@ -58,19 +58,19 @@ body {
   transition: opacity 0.2s ease;
 }
 
-/* 浅色 3D 工作区：Liquid Ether 色域、Chroma 指针光和 Strands 流线均与画布解耦。 */
+/* 认知宇宙：深空画布承载个人发散，界面层保持克制和可读。 */
 .idea-workspace {
-  --bg: #f4f6fb;
-  --surface: #ffffff;
-  --surface-2: #eef1f7;
-  --line: #dce1eb;
-  --ink: #252a36;
-  --muted: #747c8e;
-  --primary: #776bd8;
-  --primary-bright: #655bb5;
-  --discovery: #b47725;
-  --danger: #c74c55;
-  background: #f4f6fb;
+  --bg: #02070d;
+  --surface: #09121c;
+  --surface-2: #111d29;
+  --line: #263748;
+  --ink: #f3f8fc;
+  --muted: #91a4b7;
+  --primary: #4abff2;
+  --primary-bright: #9be4ff;
+  --discovery: #ff9a5c;
+  --danger: #ff7282;
+  background: #02070d;
 }
 
 .workspace-atmosphere {
@@ -79,10 +79,9 @@ body {
   inset: 0;
   overflow: hidden;
   background:
-    linear-gradient(rgb(82 91 116 / 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(82 91 116 / 0.035) 1px, transparent 1px),
-    linear-gradient(145deg, #f9fafc, #eef2f8);
-  background-size: 48px 48px, 48px 48px, auto;
+    radial-gradient(circle at 50% 50%, rgb(17 42 60 / 0.48), transparent 34%),
+    radial-gradient(circle at 22% 28%, rgb(44 111 150 / 0.14), transparent 27%),
+    linear-gradient(145deg, #01050a, #06111b 52%, #02070d);
 }
 
 .workspace-atmosphere::after {
@@ -90,17 +89,17 @@ body {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 50% 46%, transparent 22%, rgb(113 123 154 / 0.04) 64%, rgb(74 82 108 / 0.12) 118%),
-    linear-gradient(115deg, rgb(255 255 255 / 0.2), transparent 38%, rgb(112 101 186 / 0.035));
-  box-shadow: inset 0 0 120px rgb(89 96 125 / 0.08);
+    radial-gradient(circle at 50% 46%, transparent 18%, rgb(0 9 16 / 0.12) 58%, rgb(0 2 5 / 0.78) 112%),
+    linear-gradient(115deg, rgb(77 207 255 / 0.035), transparent 38%, rgb(255 139 77 / 0.025));
+  box-shadow: inset 0 0 180px rgb(0 0 0 / 0.7);
 }
 
 .liquid-ether {
   position: absolute;
   display: block;
   border-radius: 999px;
-  filter: blur(90px);
-  opacity: 0.72;
+  filter: blur(120px);
+  opacity: 0.22;
   transform: translateZ(0);
 }
 
@@ -109,7 +108,7 @@ body {
   top: -16%;
   width: 54vw;
   height: 54vw;
-  background: #d9d1f7;
+  background: #11628d;
 }
 
 .liquid-ether-b {
@@ -117,7 +116,7 @@ body {
   top: 12%;
   width: 50vw;
   height: 58vw;
-  background: #ccebed;
+  background: #18556c;
 }
 
 .liquid-ether-c {
@@ -125,7 +124,7 @@ body {
   left: 28%;
   width: 56vw;
   height: 46vw;
-  background: #f4e1c7;
+  background: #713d28;
 }
 
 .workspace-strands {
@@ -133,18 +132,18 @@ body {
   inset: 0;
   width: 100%;
   height: 100%;
-  opacity: 0.42;
-  filter: blur(0.2px) drop-shadow(0 0 10px rgb(134 126 206 / 0.2));
+  opacity: 0.16;
+  filter: blur(0.2px) drop-shadow(0 0 12px rgb(76 196 241 / 0.2));
 }
 
 .workspace-strands path {
   fill: none;
-  stroke: rgb(142 136 203 / 0.28);
+  stroke: rgb(87 198 239 / 0.32);
   stroke-width: 1.2;
 }
 
-.workspace-strands path:nth-child(2) { stroke: rgb(103 178 183 / 0.22); }
-.workspace-strands path:nth-child(3) { stroke: rgb(216 173 112 / 0.2); }
+.workspace-strands path:nth-child(2) { stroke: rgb(113 138 255 / 0.26); }
+.workspace-strands path:nth-child(3) { stroke: rgb(255 143 81 / 0.22); }
 
 .workspace-panel,
 .project-menu,
@@ -937,6 +936,120 @@ canvas {
   47%, 100% { opacity: 0; }
 }
 
+/* Cosmic workspace overrides: glass controls float above the graph without competing with it. */
+.idea-workspace .workspace-panel,
+.idea-workspace .project-menu,
+.idea-workspace .quick-add-popover {
+  border-color: rgb(127 207 241 / 0.2);
+  background: linear-gradient(145deg, rgb(10 22 33 / 0.9), rgb(4 11 18 / 0.76));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 28px 80px rgb(0 0 0 / 0.48);
+}
+
+.idea-workspace .workspace-dock-trigger,
+.idea-workspace .workspace-dock-options,
+.idea-workspace .canvas-view-switch,
+.keyword-visibility-toggle {
+  border: 1px solid rgb(132 207 239 / 0.2);
+  background: rgb(5 14 23 / 0.74);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 12px 38px rgb(0 0 0 / 0.32);
+  backdrop-filter: blur(22px) saturate(125%);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+}
+
+.idea-workspace .workspace-dock-trigger:hover,
+.idea-workspace .workspace-dock.is-open .workspace-dock-trigger,
+.idea-workspace .workspace-dock-options button:hover {
+  color: var(--ink);
+  background: rgb(18 37 52 / 0.88);
+}
+
+.idea-workspace .workspace-dock-options button.is-active,
+.idea-workspace .canvas-view-switch button.is-active,
+.keyword-visibility-toggle.is-active {
+  color: #dff8ff;
+  background: linear-gradient(145deg, rgb(34 91 117 / 0.82), rgb(24 49 78 / 0.84));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.14), 0 0 24px rgb(67 188 236 / 0.16);
+}
+
+.keyword-visibility-toggle {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 999px;
+  padding: 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 180ms ease, background 220ms ease, box-shadow 220ms ease, transform 180ms ease;
+}
+
+.keyword-visibility-toggle:hover { color: var(--ink); }
+.keyword-visibility-toggle:active { transform: scale(0.97); }
+.keyword-visibility-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.keyword-visibility-toggle svg { width: 17px; height: 17px; }
+.keyword-visibility-toggle path,
+.keyword-visibility-toggle circle { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.canvas-navigation-hint {
+  border: 1px solid rgb(133 200 230 / 0.16);
+  background: rgb(3 10 17 / 0.54);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 0.22);
+}
+
+.idea-workspace .specular-node {
+  border-color: rgb(133 211 244 / 0.24);
+  color: #dff6ff;
+  background: linear-gradient(145deg, rgb(10 29 43 / 0.82), rgb(5 14 23 / 0.68));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 0 18px rgb(80 196 239 / 0.1), 0 16px 42px rgb(0 0 0 / 0.34);
+  backdrop-filter: blur(18px) saturate(130%);
+}
+
+.idea-workspace .specular-node:hover,
+.idea-workspace .specular-node.is-selected {
+  border-color: rgb(160 226 255 / 0.62);
+  color: #fff;
+  background: linear-gradient(145deg, rgb(21 62 83 / 0.92), rgb(13 30 49 / 0.86));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.14), 0 0 0 4px rgb(79 196 239 / 0.08), 0 0 30px rgb(79 196 239 / 0.2), 0 18px 48px rgb(0 0 0 / 0.4);
+}
+
+.idea-workspace .specular-node.is-root {
+  border-color: rgb(231 249 255 / 0.54);
+  color: #fff;
+  background: rgb(6 19 29 / 0.62);
+  box-shadow: 0 0 26px rgb(163 226 255 / 0.2), 0 18px 50px rgb(0 0 0 / 0.36);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.node-label.is-concealed {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(4px) scale(0.78);
+}
+
+.node-label.is-revealed {
+  transition-delay: 45ms;
+}
+
+.idea-workspace .quick-link-endpoint {
+  border-color: rgb(108 207 245 / 0.32);
+  color: #bceeff;
+  background: rgb(7 29 41 / 0.9);
+  box-shadow: 0 0 22px rgb(65 189 235 / 0.16);
+}
+
+.idea-workspace .quick-link-endpoint.is-new {
+  color: #ffd1b3;
+  background: rgb(47 25 19 / 0.9);
+  box-shadow: 0 0 22px rgb(255 139 77 / 0.14);
+}
+
+.idea-workspace .mobile-panel-backdrop { background: rgb(0 4 8 / 0.5); }
+.idea-workspace .mobile-panel-close { background: rgb(8 20 30 / 0.9); color: var(--ink); }
+
 @media (prefers-reduced-motion: reduce) {
   .project-glass-card,
   .project-glass-card svg,
@@ -950,6 +1063,7 @@ canvas {
   .workspace-dock,
   .workspace-dock-options,
   .workspace-dock-trigger,
+  .keyword-visibility-toggle,
   .quick-link-endpoint {
     animation: none;
     transition: none;
@@ -960,6 +1074,14 @@ canvas {
 }
 
 @media (max-width: 640px) {
+  .keyword-visibility-toggle {
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+  }
+
+  .keyword-visibility-toggle span { display: none; }
+
   .canvas-view-switch button {
     min-width: 88px;
     min-height: 42px;

@@ -25,11 +25,11 @@ import {
 import type { Vec3 } from "@/lib/types";
 import { Button, TextInput } from "@/components/ui";
 
-const NODE_COLOR = "#958be8";
-const NODE_FOCUS_COLOR = "#b8d9ef";
-const NODE_SOURCE_COLOR = "#efbf77";
-const EDGE_COLOR = "#b9b9d8";
-const EDGE_DISCOVERY_COLOR = "#e8b86d";
+const NODE_COLOR = "#73cfff";
+const NODE_FOCUS_COLOR = "#ffffff";
+const NODE_SOURCE_COLOR = "#ffb36b";
+const EDGE_COLOR = "#72bfe8";
+const EDGE_DISCOVERY_COLOR = "#ff9a5c";
 const VIEW_MOVEMENT_CODES = new Set([
   "KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE",
   "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
@@ -78,7 +78,15 @@ type QuickAddTarget = {
   sourceNodeId?: string;
 };
 
-export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; rightOpen: boolean }) {
+export default function Canvas3D({
+  leftOpen,
+  rightOpen,
+  labelsVisible,
+}: {
+  leftOpen: boolean;
+  rightOpen: boolean;
+  labelsVisible: boolean;
+}) {
   const clearSelection = useStore((s) => s.selectNode);
   const clearEdge = useStore((s) => s.selectEdge);
   const setConnectFrom = useStore((s) => s.setConnectFrom);
@@ -104,17 +112,17 @@ export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; r
         }}
       >
         <ViewCamera />
-        <ambientLight intensity={1.8} />
-        <directionalLight position={[10, 12, 10]} intensity={1.1} color="#ffffff" />
-        <pointLight position={[-12, -8, -12]} intensity={0.45} color="#c9c2f6" />
+        <ambientLight intensity={0.42} />
+        <directionalLight position={[10, 12, 10]} intensity={0.72} color="#dff6ff" />
+        <pointLight position={[-12, -8, -12]} intensity={0.9} color="#4ecbff" />
         <SceneAtmosphere />
         <SpatialDepthField />
         <BackgroundCreateLayer onCreate={setQuickAddTarget} />
-        <Graph onQuickAdd={setQuickAddTarget} />
+        <Graph onQuickAdd={setQuickAddTarget} labelsVisible={labelsVisible} />
         <CameraController />
         <AdaptiveControls />
       </Canvas>
-      <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full border border-white/70 bg-white/45 px-3 py-1.5 text-[11px] text-muted backdrop-blur-md">
+      <div className="canvas-navigation-hint pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full px-3 py-1.5 text-[11px] text-muted backdrop-blur-md">
         {viewMode === "3d" ? "3D：拖动旋转 · 滚轮缩放 · WASD 游走" : "2D：拖动画布 · 滚轮缩放 · WASD 平移"}
       </div>
       {quickAddTarget && (
@@ -137,7 +145,7 @@ export default function Canvas3D({ leftOpen, rightOpen }: { leftOpen: boolean; r
 function SceneAtmosphere() {
   const viewMode = useStore((state) => state.viewMode);
   return viewMode === "3d"
-    ? <fogExp2 attach="fog" args={["#eef2f8", 0.009]} />
+    ? <fogExp2 attach="fog" args={["#02070d", 0.008]} />
     : null;
 }
 
@@ -145,39 +153,63 @@ function SpatialDepthField() {
   const pointsRef = useRef<THREE.Points>(null);
   const viewMode = useStore((state) => state.viewMode);
   const reducedMotion = usePrefersReducedMotion();
-  const positions = useMemo(() => {
-    const values = new Float32Array(540);
-    let seed = 1729;
-    const random = () => {
-      seed = (seed * 16807) % 2147483647;
-      return (seed - 1) / 2147483646;
+  const particleData = useMemo(() => {
+    const count = 1800;
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const random = (index: number, salt: number) => {
+      const value = Math.sin((index + 1) * 12.9898 + salt * 78.233) * 43758.5453;
+      return value - Math.floor(value);
     };
-    for (let index = 0; index < values.length; index += 3) {
-      values[index] = (random() - 0.5) * 84;
-      values[index + 1] = (random() - 0.5) * 58;
-      values[index + 2] = -34 + random() * 48;
+    const palette = [
+      new THREE.Color("#f8fcff"),
+      new THREE.Color("#72d4ff"),
+      new THREE.Color("#ff985c"),
+      new THREE.Color("#8e9fff"),
+    ];
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 3;
+      if (index < count * 0.72) {
+        const arm = index % 3;
+        const radius = 3.5 + Math.pow(random(index, 1), 0.72) * 42;
+        const angle = radius * 0.19 + arm * ((Math.PI * 2) / 3) + (random(index, 2) - 0.5) * 0.5;
+        positions[offset] = Math.cos(angle) * radius * 1.15 + (random(index, 3) - 0.5) * 2.2;
+        positions[offset + 1] = Math.sin(angle) * radius * 0.68 + (random(index, 4) - 0.5) * 2.1;
+        positions[offset + 2] = (random(index, 5) - 0.5) * (5 + radius * 0.18) - 7;
+      } else {
+        positions[offset] = (random(index, 6) - 0.5) * 110;
+        positions[offset + 1] = (random(index, 7) - 0.5) * 72;
+        positions[offset + 2] = -42 + random(index, 8) * 58;
+      }
+      const colorRoll = random(index, 9);
+      const color = palette[colorRoll > 0.9 ? 2 : colorRoll > 0.7 ? 3 : colorRoll > 0.45 ? 1 : 0];
+      colors[offset] = color.r;
+      colors[offset + 1] = color.g;
+      colors[offset + 2] = color.b;
     }
-    return values;
+    return { positions, colors };
   }, []);
 
   useFrame((_, delta) => {
     if (pointsRef.current && viewMode === "3d" && !reducedMotion) {
-      pointsRef.current.rotation.z += Math.min(delta, 0.05) * 0.006;
+      pointsRef.current.rotation.z += Math.min(delta, 0.05) * 0.012;
     }
   });
 
   return (
     <points ref={pointsRef} visible={viewMode === "3d"} frustumCulled={false}>
       <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+        <bufferAttribute attach="attributes-position" args={[particleData.positions, 3]} />
+        <bufferAttribute attach="attributes-color" args={[particleData.colors, 3]} />
       </bufferGeometry>
       <pointsMaterial
-        color="#8f88cf"
-        size={0.075}
+        vertexColors
+        size={0.105}
         sizeAttenuation
         transparent
-        opacity={0.2}
+        opacity={0.72}
         depthWrite={false}
+        blending={THREE.AdditiveBlending}
       />
     </points>
   );
@@ -365,7 +397,13 @@ function QuickAddDialog({
   );
 }
 
-function Graph({ onQuickAdd }: { onQuickAdd: (target: QuickAddTarget) => void }) {
+function Graph({
+  onQuickAdd,
+  labelsVisible,
+}: {
+  onQuickAdd: (target: QuickAddTarget) => void;
+  labelsVisible: boolean;
+}) {
   const nodes = useStore((s) => s.idea?.nodes ?? []);
   const edges = useStore((s) => s.idea?.edges ?? []);
   const layoutNonce = useStore((s) => s.layoutNonce);
@@ -432,6 +470,7 @@ function Graph({ onQuickAdd }: { onQuickAdd: (target: QuickAddTarget) => void })
   return (
     <group>
       <SceneDetailManager nodes={nodes} edges={edges} suggestions={suggestions.filter((suggestion) => suggestion.type === "node")} />
+      <CognitiveOrbitSystem rootNodeId={nodes.find((node) => node.semanticRole === "root")?.id ?? nodes[0]?.id} />
       {edges.map((edge) => (
         <EdgeMesh
           key={edge.id}
@@ -454,8 +493,10 @@ function Graph({ onQuickAdd }: { onQuickAdd: (target: QuickAddTarget) => void })
           node={node}
           dimmed={isFocusActive && !focusSet.has(node.id)}
           selected={node.id === selectedNodeId}
+          focused={node.id === focusedNodeId}
           isConnectSource={mode === "connect" && connectFromId === node.id}
           connectMode={mode === "connect"}
+          labelsVisible={labelsVisible}
           onHoverChange={(hovered) => holdNodeHover(hovered ? node.id : null)}
         />
       ))}
@@ -479,6 +520,39 @@ function Graph({ onQuickAdd }: { onQuickAdd: (target: QuickAddTarget) => void })
         .map((s) => (
           <CandidateEdge key={s.id} suggestion={s} />
         ))}
+    </group>
+  );
+}
+
+function CognitiveOrbitSystem({ rootNodeId }: { rootNodeId?: string }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const viewMode = useStore((state) => state.viewMode);
+  const reducedMotion = usePrefersReducedMotion();
+
+  useFrame((_, delta) => {
+    if (!groupRef.current || !rootNodeId) return;
+    const root = displayPositionsRef.current.get(rootNodeId) ?? positionsRef.current.get(rootNodeId);
+    if (root) groupRef.current.position.lerp(root, 1 - Math.exp(-Math.min(delta, 0.05) * 8));
+    if (!reducedMotion) groupRef.current.rotation.z += Math.min(delta, 0.05) * 0.025;
+  });
+
+  if (!rootNodeId || viewMode !== "3d") return null;
+
+  return (
+    <group ref={groupRef}>
+      <pointLight color="#dff8ff" intensity={2.1} distance={13} decay={2} />
+      <mesh rotation={[1.12, 0.18, 0.28]}>
+        <torusGeometry args={[4.4, 0.012, 8, 128]} />
+        <meshBasicMaterial color="#72d4ff" transparent opacity={0.16} depthWrite={false} blending={THREE.AdditiveBlending} />
+      </mesh>
+      <mesh rotation={[0.7, 0.92, -0.34]}>
+        <torusGeometry args={[7.1, 0.01, 8, 160]} />
+        <meshBasicMaterial color="#8e9fff" transparent opacity={0.11} depthWrite={false} blending={THREE.AdditiveBlending} />
+      </mesh>
+      <mesh rotation={[1.36, -0.5, 0.62]}>
+        <torusGeometry args={[10.2, 0.009, 8, 180]} />
+        <meshBasicMaterial color="#ff985c" transparent opacity={0.08} depthWrite={false} blending={THREE.AdditiveBlending} />
+      </mesh>
     </group>
   );
 }
@@ -607,21 +681,26 @@ function NodeMesh({
   node,
   dimmed,
   selected,
+  focused,
   isConnectSource,
   connectMode,
+  labelsVisible,
   onHoverChange,
 }: {
   node: ThoughtNode;
   dimmed: boolean;
   selected: boolean;
+  focused: boolean;
   isConnectSource: boolean;
   connectMode: boolean;
+  labelsVisible: boolean;
   onHoverChange: (hovered: boolean) => void;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const labelRef = useRef<HTMLDivElement>(null);
   const viewMode = useStore((state) => state.viewMode);
   const [hovered, setHovered] = useState(false);
+  const labelRevealed = labelsVisible || node.semanticRole === "root" || selected || focused || hovered || isConnectSource;
   const draggingRef = useRef(false);
   const movedRef = useRef(false);
   const startPos = useRef({ x: 0, y: 0 });
@@ -633,7 +712,7 @@ function NodeMesh({
     const lod = labelLODRef.current.get(node.id) ?? "full";
     if (labelRef.current && labelRef.current.dataset.lod !== lod) {
       labelRef.current.dataset.lod = lod;
-      labelRef.current.tabIndex = lod === "point" ? -1 : 0;
+      labelRef.current.tabIndex = lod === "point" || !labelRevealed ? -1 : 0;
     }
   });
 
@@ -719,11 +798,18 @@ function NodeMesh({
     window.addEventListener("pointercancel", onUp);
   };
 
+  const branchColor = useMemo(() => {
+    if (node.semanticRole === "root") return "#f7fcff";
+    const key = node.branchId ?? node.id;
+    let hash = 0;
+    for (let index = 0; index < key.length; index += 1) hash = ((hash << 5) - hash + key.charCodeAt(index)) | 0;
+    return ["#73cfff", "#8e9fff", "#ff9a5c", "#69e0c1"][Math.abs(hash) % 4];
+  }, [node.branchId, node.id, node.semanticRole]);
   const baseColor = isConnectSource
     ? NODE_SOURCE_COLOR
     : selected || hovered
       ? NODE_FOCUS_COLOR
-      : NODE_COLOR;
+      : branchColor || NODE_COLOR;
   const opacity = dimmed ? 0.15 : 1;
 
   return (
@@ -742,20 +828,32 @@ function NodeMesh({
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       <mesh>
-        <sphereGeometry args={[selected || hovered ? 0.46 : 0.38, 28, 28]} />
+        <sphereGeometry args={[node.semanticRole === "root" ? 0.68 : selected || hovered ? 0.46 : 0.38, 28, 28]} />
         <meshStandardMaterial
           color={baseColor}
           emissive={baseColor}
-          emissiveIntensity={selected || hovered ? 0.72 : 0.34}
+          emissiveIntensity={node.semanticRole === "root" ? 1.25 : selected || hovered ? 0.72 : 0.48}
           roughness={0.22}
           metalness={0.08}
           transparent
-          opacity={opacity * (selected || hovered ? 0.2 : 0.12)}
+          opacity={opacity * (node.semanticRole === "root" ? 0.34 : selected || hovered ? 0.24 : 0.15)}
           depthWrite={false}
         />
       </mesh>
+      {node.semanticRole === "root" && (
+        <mesh raycast={() => null}>
+          <sphereGeometry args={[1.18, 28, 28]} />
+          <meshBasicMaterial
+            color="#dff8ff"
+            transparent
+            opacity={opacity * 0.055}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      )}
       <mesh>
-        <sphereGeometry args={[selected || hovered ? 0.16 : 0.13, 24, 24]} />
+        <sphereGeometry args={[node.semanticRole === "root" ? 0.24 : selected || hovered ? 0.16 : 0.13, 24, 24]} />
         <meshStandardMaterial
           color={selected || hovered ? "#f7fbff" : baseColor}
           emissive={baseColor}
@@ -770,14 +868,15 @@ function NodeMesh({
         <torusGeometry args={[selected || hovered ? 0.34 : 0.29, 0.012, 8, 48]} />
         <meshBasicMaterial color={baseColor} transparent opacity={opacity * (selected || hovered ? 0.72 : 0.34)} depthWrite={false} />
       </mesh>
-      <Html position={[0, 0, 0]} center zIndexRange={[10, 0]}>
+      <Html position={[0, node.semanticRole === "root" ? 1.45 : 0.92, 0]} center zIndexRange={[10, 0]}>
         <div
           ref={labelRef}
           data-lod="full"
-          className={`node-label formal-node-label specular-node ${selected ? "is-selected" : ""} ${isConnectSource ? "is-source" : ""}`}
+          className={`node-label formal-node-label specular-node ${selected ? "is-selected" : ""} ${isConnectSource ? "is-source" : ""} ${node.semanticRole === "root" ? "is-root" : ""} ${labelRevealed ? "is-revealed" : "is-concealed"}`}
           data-testid="formal-node"
           role="button"
           tabIndex={0}
+          aria-hidden={!labelRevealed}
           aria-label={`选择节点：${node.text}`}
           onPointerDown={onPointerDown}
           onDoubleClick={(event) => event.stopPropagation()}
@@ -787,7 +886,7 @@ function NodeMesh({
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") handleClick();
           }}
-          style={{ opacity: dimmed ? 0.2 : 1 }}
+          style={{ opacity: dimmed ? 0.16 : 1 }}
         >
           {node.text}
         </div>
