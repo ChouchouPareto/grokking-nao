@@ -25,6 +25,7 @@ export default function IdeaSpace({ id }: { id: string }) {
   const [rightPinned, setRightPinned] = useState(false);
   const [rightTab, setRightTab] = useState<"context" | "summary">("context");
   const [dockOpen, setDockOpen] = useState(false);
+  const [labelsVisible, setLabelsVisible] = useState(false);
   const leftCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rightCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dockCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -179,7 +180,7 @@ export default function IdeaSpace({ id }: { id: string }) {
   return (
     <div className="idea-workspace relative h-screen w-screen overflow-hidden bg-bg text-ink">
       <WorkspaceAtmosphere />
-      <Canvas3D leftOpen={leftOpen} rightOpen={rightVisible} />
+      <Canvas3D leftOpen={leftOpen} rightOpen={rightVisible} labelsVisible={labelsVisible} />
       <TopBar
         dockOpen={dockOpen}
         leftOpen={leftOpen}
@@ -189,6 +190,8 @@ export default function IdeaSpace({ id }: { id: string }) {
         onDockLeave={scheduleDockClose}
         onDockToggle={() => setDockOpen((open) => !open)}
         onDockSelect={selectDockTarget}
+        labelsVisible={labelsVisible}
+        onLabelsToggle={() => setLabelsVisible((visible) => !visible)}
       />
       {(leftOpen || rightVisible) && <button type="button" className="mobile-panel-backdrop" aria-label="关闭侧栏" onClick={closeMobilePanel} />}
       <div className="edge-hover-zone edge-hover-zone-left" onMouseEnter={revealLeft} onMouseLeave={scheduleLeftClose} aria-hidden="true" />
@@ -233,6 +236,8 @@ function TopBar({
   onDockLeave,
   onDockToggle,
   onDockSelect,
+  labelsVisible,
+  onLabelsToggle,
 }: {
   dockOpen: boolean;
   leftOpen: boolean;
@@ -242,6 +247,8 @@ function TopBar({
   onDockLeave: () => void;
   onDockToggle: () => void;
   onDockSelect: (target: "tools" | "context" | "summary") => void;
+  labelsVisible: boolean;
+  onLabelsToggle: () => void;
 }) {
   const router = useRouter();
   const idea = useStore((s) => s.idea);
@@ -321,6 +328,23 @@ function TopBar({
             2D 平面
           </button>
         </div>
+        <button
+          type="button"
+          className={`keyword-visibility-toggle ${labelsVisible ? "is-active" : ""}`}
+          aria-pressed={labelsVisible}
+          aria-label={labelsVisible ? "隐藏全部关键词" : "显示全部关键词"}
+          title={labelsVisible ? "隐藏全部关键词" : "显示全部关键词"}
+          onClick={onLabelsToggle}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            {labelsVisible ? (
+              <><path d="M3 12s3.2-5 9-5 9 5 9 5-3.2 5-9 5-9-5-9-5Z" /><circle cx="12" cy="12" r="2.3" /></>
+            ) : (
+              <><path d="m4 4 16 16M10.6 7.2A9.7 9.7 0 0 1 12 7c5.8 0 9 5 9 5a13.5 13.5 0 0 1-2.1 2.6M14.4 16.7c-.8.2-1.6.3-2.4.3-5.8 0-9-5-9-5a13.6 13.6 0 0 1 3.1-3.4" /></>
+            )}
+          </svg>
+          <span>关键词</span>
+        </button>
         <nav
           className={`workspace-dock ${dockOpen ? "is-open" : ""}`}
           aria-label="思考空间面板"

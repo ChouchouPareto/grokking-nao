@@ -40,6 +40,12 @@ function report(name, passed, detail = "") {
   const initialCount = await page.getByTestId("formal-node").count();
   report("多关键词已拆分为节点", initialCount === 6, `实际 ${initialCount}`);
   report("3D 默认激活", await page.getByRole("button", { name: "3D 空间" }).getAttribute("aria-pressed") === "true");
+  const initiallyHidden = await page.getByTestId("formal-node").evaluateAll((items) => items.filter((item) => item.getAttribute("aria-hidden") === "true").length);
+  report("认知星系默认收起非核心关键词", initiallyHidden > 0, `隐藏 ${initiallyHidden} 个`);
+  await page.getByRole("button", { name: "显示全部关键词" }).click();
+  const visibleAfterToggle = await page.getByTestId("formal-node").evaluateAll((items) => items.every((item) => item.getAttribute("aria-hidden") === "false"));
+  report("关键词可一键全部显示", visibleAfterToggle);
+  await page.getByRole("button", { name: "隐藏全部关键词" }).click();
 
   const dock = page.locator(".workspace-dock");
   await dock.hover();
@@ -79,7 +85,7 @@ function report(name, passed, detail = "") {
   await firstNode.click({ force: true });
   await page.waitForTimeout(700);
   const focusedOpacities = await page.getByTestId("formal-node").evaluateAll((items) => items.map((item) => item.style.opacity));
-  report("聚焦时无关节点后退并弱化", focusedOpacities.includes("0.2"));
+  report("聚焦时无关节点后退并弱化", focusedOpacities.some((opacity) => Number(opacity) > 0 && Number(opacity) < 0.5));
   await page.keyboard.press("Escape");
   await page.waitForTimeout(700);
   const globalOpacities = await page.getByTestId("formal-node").evaluateAll((items) => items.map((item) => item.style.opacity));
